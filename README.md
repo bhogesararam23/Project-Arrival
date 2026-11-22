@@ -28,20 +28,15 @@ The initial product focuses exclusively on restaurants, cafes, and food. The fir
 
 Broader commerce categories are explicitly out of scope until the restaurant experience is proven.
 
-## Architecture direction
+## Technology strategy
 
-The initial implementation is a TypeScript modular monolith with clear domain boundaries and provider adapters.
+- **TypeScript:** primary web, API, domain orchestration, and integration layer.
+- **Rust:** systems-oriented, reliability-sensitive, or performance-critical components when justified by evidence.
+- **C++:** algorithm and performance research where benchmarks and engineering needs justify it.
+- **Dart / Flutter:** future mobile client, reusing stable backend contracts.
+- **SQL / PostgreSQL / PostGIS:** transactional, relational, and geospatial data.
 
-Proposed foundations:
-
-- React / Next.js and Tailwind CSS for the customer experience.
-- TypeScript APIs, initially deployable on Cloudflare Workers.
-- PostgreSQL with PostGIS for transactional and geographic data.
-- Authenticated server events for order updates.
-- Separate merchant, payment, mapping, discovery, and delivery adapters.
-- Automated tests, migrations, audit trails, observability, and documented recovery procedures.
-
-These are architectural directions, not claims that integrations or production infrastructure are already implemented.
+The initial architecture is a modular TypeScript monolith with explicit domain boundaries and provider adapters. Additional languages are adopted deliberately, not for language-count or prestige. See [System architecture](docs/ARCHITECTURE.md) and [Engineering principles](docs/ENGINEERING.md).
 
 ## Documentation
 
@@ -54,18 +49,22 @@ These are architectural directions, not claims that integrations or production i
 - [Data provenance strategy](docs/DATA_PROVENANCE.md)
 - [Integration contracts](docs/INTEGRATIONS.md)
 - [Order lifecycle](docs/ORDER_LIFECYCLE.md)
+- [Roadmap](docs/ROADMAP.md)
 - [Architecture decisions](docs/ADR/README.md)
 - [Contributing](CONTRIBUTING.md)
-- [AI and automation workflow](AI_WORKFLOW.md)
-- [Roadmap](ROADMAP.md)
+- [AI and automation workflow](docs/AI_WORKFLOW.md)
 
 ## Current status
 
-**Stage: project foundation.** This repository is being established before product implementation. No production merchant, payment, delivery, or global data integration should be assumed to exist until it is implemented, tested, and documented.
+**Stage: project foundation and research.** This repository establishes product direction, engineering conventions, and architectural constraints. No production merchant, payment, delivery, or global data integration should be assumed to exist until it is implemented, tested, and documented.
+
+Every capability must be labelled as planned, prototyped, sandbox-tested, or production-verified.
 
 ## Development philosophy
 
-Arrival should be built in small, reviewable, evidence-backed changes. Each change should have a clear purpose, appropriate tests, and documentation where needed. AI tools may assist development, but humans remain responsible for reviewing decisions, validating results, and understanding the code.
+Arrival should be built in small, reviewable, evidence-backed changes. Each change should have a clear purpose, appropriate tests, and documentation where needed. AI tools may assist development, but the repository remains the source of truth. Humans remain responsible for reviewing decisions, validating results, and understanding the code.
+
+See [AI-assisted development workflow](docs/AI_WORKFLOW.md).
 
 ## Name status
 
