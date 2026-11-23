@@ -105,11 +105,21 @@ CREATE TABLE guest_order_grants (
 CREATE TABLE delivery_addresses (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), customer_id uuid REFERENCES customers(id),
  guest_session_id uuid REFERENCES guest_sessions(id), country_code char(2) NOT NULL,
- address_ciphertext bytea NOT NULL, recipient_ciphertext bytea NOT NULL, point geography(Point,4326),
+ address_ciphertext bytea NOT NULL, recipient_ciphertext bytea NOT NULL,
  resolution_source_id uuid REFERENCES source_registry(id), resolved_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
  CHECK(num_nonnulls(customer_id, guest_session_id) = 1)
 );
-CREATE INDEX delivery_addresses_geo_gix ON delivery_addresses USING gist(point) WHERE point IS NOT NULL;
+
+-- Precise recipient coordinates are isolated from the general address record.
+-- Restrict this table to the serviceability/fulfilment role and purge by expires_at.
+CREATE TABLE restricted_delivery_coordinates (
+ delivery_address_id uuid PRIMARY KEY REFERENCES delivery_addresses(id) ON DELETE CASCADE,
+ point geography(Point,4326) NOT NULL,
+ resolved_at timestamptz NOT NULL,
+ expires_at timestamptz NOT NULL,
+ CHECK(expires_at > resolved_at)
+);
+CREATE INDEX restricted_delivery_coordinates_geo_gix ON restricted_delivery_coordinates USING gist(point);
 CREATE TABLE checkout_quotes (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), location_id uuid NOT NULL REFERENCES merchant_locations(id),
  delivery_address_id uuid NOT NULL REFERENCES delivery_addresses(id),
@@ -125,12 +135,19 @@ CREATE TABLE orders (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), location_id uuid NOT NULL REFERENCES merchant_locations(id),
  delivery_address_id uuid NOT NULL REFERENCES delivery_addresses(id),
  quote_id uuid NOT NULL UNIQUE REFERENCES checkout_quotes(id), customer_id uuid REFERENCES customers(id),
- guest_session_id uuid REFERENCES guest_sessions(id), guest_grant_id uuid REFERENCES guest_order_grants(id),
+ guest_session_id uuid REFERENCES guest_sessions(id),
  state order_state NOT NULL DEFAULT 'submitted', currency char(3) NOT NULL, total_minor bigint NOT NULL CHECK(total_minor >= 0),
- purchase_snapshot jsonb NOT NULL, idempotency_key text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
- updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(location_id,idempotency_key),
+ purchase_snapshot jsonb NOT NULL,
+ idempotency_record_id uuid NOT NULL UNIQUE REFERENCES idempotency_records(id),
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  CHECK(num_nonnulls(customer_id, guest_session_id) = 1)
 );
+-- A guest access grant is bound to exactly one order; the digest alone is never sufficient
+-- without the referenced order, scope, expiry and revocation checks.
+ALTER TABLE guest_order_grants
+ ADD COLUMN order_id uuid NOT NULL REFERENCES orders(id) ON DELETE CASCADE;
+CREATE INDEX guest_order_grants_order_idx ON guest_order_grants(order_id,scope);
+
 CREATE INDEX orders_location_created_idx ON orders(location_id,created_at DESC);
 CREATE INDEX orders_state_updated_idx ON orders(state,updated_at);
 CREATE TABLE order_items (
@@ -181,6 +198,8 @@ CREATE TABLE fulfilment_events (
  received_at timestamptz NOT NULL DEFAULT now(), point geography(Point,4326), details_redacted jsonb NOT NULL DEFAULT '{}'
 );
 CREATE INDEX fulfilment_events_attempt_time_idx ON fulfilment_events(fulfilment_attempt_id,received_at);
+COMMENT ON COLUMN fulfilment_events.point IS
+ 'Restricted courier coordinate; apply role-based access and short, documented retention.';
 
 CREATE TABLE provider_capabilities (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), provider_key text NOT NULL, capability text NOT NULL,
@@ -188,7 +207,7 @@ CREATE TABLE provider_capabilities (
  service_area geometry(MultiPolygon,4326),
  status text NOT NULL CHECK(status IN ('unknown','pending','sandbox_tested','production_verified','disabled')),
  evidence_url text NOT NULL, reviewed_at timestamptz NOT NULL, expires_at timestamptz,
- UNIQUE(provider_key,capability,country_code,location_id)
+ UNIQUE NULLS NOT DISTINCT (provider_key,capability,country_code,location_id)
 );
 CREATE INDEX provider_capability_area_gix ON provider_capabilities USING gist(service_area) WHERE service_area IS NOT NULL;
 CREATE TABLE webhook_inbox (
@@ -211,4 +230,8 @@ CREATE TABLE audit_records (
  occurred_at timestamptz NOT NULL DEFAULT now(), metadata_redacted jsonb NOT NULL DEFAULT '{}'
 );
 CREATE INDEX audit_resource_time_idx ON audit_records(resource_type,resource_id,occurred_at DESC);
+-- Application/service layer must also enforce tenant, guest-grant, quote ownership and role
+-- checks. This proposal intentionally does not enable broad client access or RLS policies.
+COMMENT ON TABLE restricted_delivery_coordinates IS
+ 'Sensitive recipient coordinates. Restrict database grants and purge promptly after fulfilment/quote expiry.';
 COMMIT;
