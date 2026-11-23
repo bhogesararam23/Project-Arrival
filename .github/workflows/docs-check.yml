@@ -33,10 +33,7 @@ jobs:
             exit 1
           fi
           # Two trailing spaces are valid Markdown hard breaks; flag three or more.
-          if grep -nE '[[:blank:]]{3,}
-            exit 1
-          fi
- $files; then
+          if grep -nE '[[:blank:]]{3,}$' $files; then
             echo "Unexpected trailing whitespace found in Markdown."
             exit 1
           fi
