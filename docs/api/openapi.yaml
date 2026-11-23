@@ -1,0 +1,483 @@
+openapi: 3.1.0
+info:
+  title: Project Arrival API
+  version: 1.0.0
+  description: Proposed contract only; not a deployed API.
+servers:
+  - url: https://api.example.invalid
+    description: Placeholder
+paths:
+  /v1/guest-sessions:
+    post:
+      summary: Create a temporary guest session for checkout
+      description: Creates an anonymous session. The bearer secret is returned once and must be stored securely by the client.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                locale:
+                  type: string
+                  maxLength: 32
+      responses:
+        '201':
+          description: Guest session created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuestSession'
+        '429':
+          $ref: '#/components/responses/Problem'
+
+  /v1/places/search:
+    get:
+      summary: Search Arrival-approved discovery records
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 160
+        - name: country
+          in: query
+          schema:
+            $ref: '#/components/schemas/Country'
+        - name: lat
+          in: query
+          description: Supply together with lon; these coordinates are only a search centre, not a delivery-serviceability proof.
+          schema:
+            type: number
+            minimum: -90
+            maximum: 90
+        - name: lon
+          in: query
+          description: Supply together with lat.
+          schema:
+            type: number
+            minimum: -180
+            maximum: 180
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: Discoverability is distinct from orderability.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+
+  /v1/checkout-quotes:
+    post:
+      summary: Validate one merchant cart and create an expiring server quote
+      security:
+        - GuestOrCustomer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locationId, catalogueVersion, destination, items]
+              properties:
+                locationId:
+                  type: string
+                  format: uuid
+                catalogueVersion:
+                  type: integer
+                  minimum: 1
+                destination:
+                  type: object
+                  required: [countryCode, address]
+                  properties:
+                    countryCode:
+                      $ref: '#/components/schemas/Country'
+                    address:
+                      $ref: '#/components/schemas/DeliveryAddressInput'
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [menuItemId, quantity]
+                    properties:
+                      menuItemId:
+                        type: string
+                        format: uuid
+                      quantity:
+                        type: integer
+                        minimum: 1
+                        maximum: 100
+                      modifierOptionIds:
+                        type: array
+                        items:
+                          type: string
+                          format: uuid
+      responses:
+        '201':
+          description: Quote returned; expiresAt is authoritative.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+
+  /v1/orders:
+    post:
+      summary: Submit an unexpired quote once
+      security:
+        - GuestOrCustomer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quoteId, paymentMethodToken]
+              properties:
+                quoteId:
+                  type: string
+                  format: uuid
+                paymentMethodToken:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+                  description: Opaque provider token only; never PAN/CVV.
+      responses:
+        '202':
+          description: Accepted for orchestration; not proof of merchant acceptance or payment capture.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCreated'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+
+  /v1/orders/{orderId}:
+    get:
+      summary: Retrieve order with customer auth or scoped guest grant
+      security:
+        - CustomerBearer: []
+        - GuestOrderGrant: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Independent current order, payment and fulfilment states.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderView'
+        '404':
+          $ref: '#/components/responses/Problem'
+
+  /v1/orders/{orderId}/events:
+    get:
+      summary: Retrieve the authorized order event timeline
+      security:
+        - CustomerBearer: []
+        - GuestOrderGrant: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Authorized order events; sensitive provider payloads and address data are excluded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderEvents'
+        '404':
+          $ref: '#/components/responses/Problem'
+
+  /v1/orders/{orderId}/cancellations:
+    post:
+      summary: Request cancellation subject to merchant, payment and fulfilment state
+      security:
+        - CustomerBearer: []
+        - GuestOrderGrant: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        '202':
+          description: Cancellation request accepted for processing; cancellation is not confirmed yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderView'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+
+components:
+  securitySchemes:
+    GuestOrCustomer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-session-token
+    CustomerBearer:
+      type: http
+      scheme: bearer
+    GuestOrderGrant:
+      type: http
+      scheme: bearer
+      bearerFormat: scoped-high-entropy-secret
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+      description: Scope to principal and operation. Same key and body returns the original result; a body mismatch conflicts.
+
+  responses:
+    Problem:
+      description: RFC 9457 problem details
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            required: [type, title, status]
+            properties:
+              type:
+                type: string
+              title:
+                type: string
+              status:
+                type: integer
+              detail:
+                type: string
+              code:
+                type: string
+              requestId:
+                type: string
+
+  schemas:
+    Country:
+      type: string
+      pattern: '^[A-Z]{2}$'
+      description: ISO 3166-1 alpha-2.
+
+    Money:
+      type: object
+      required: [amountMinor, currency]
+      properties:
+        amountMinor:
+          type: string
+          pattern: '^(0|[1-9][0-9]*)$'
+          description: Non-negative integer minor units encoded as a decimal string to avoid JSON number precision loss.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+
+    GuestSession:
+      type: object
+      required: [sessionToken, expiresAt]
+      properties:
+        sessionToken:
+          type: string
+          minLength: 32
+          description: Opaque high-entropy bearer secret returned once.
+        expiresAt:
+          type: string
+          format: date-time
+
+    DeliveryAddressInput:
+      type: object
+      required: [formattedAddress]
+      properties:
+        formattedAddress:
+          type: string
+          minLength: 5
+          maxLength: 1000
+        addressLines:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+            maxLength: 250
+        locality:
+          type: string
+          maxLength: 160
+        administrativeArea:
+          type: string
+          maxLength: 160
+        postalCode:
+          type: string
+          maxLength: 32
+        recipientName:
+          type: string
+          maxLength: 160
+        recipientContact:
+          type: string
+          maxLength: 160
+          description: Required only when the chosen merchant or fulfilment workflow needs a contact method.
+        deliveryInstructions:
+          type: string
+          maxLength: 1000
+
+    SearchResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [venueId, locationId, name, countryCode, discoverable, orderability]
+            properties:
+              venueId:
+                type: string
+                format: uuid
+              locationId:
+                type: string
+                format: uuid
+              name:
+                type: string
+              countryCode:
+                $ref: '#/components/schemas/Country'
+              address:
+                type: string
+              distanceMeters:
+                type: integer
+                minimum: 0
+              discoverable:
+                type: boolean
+              lastVerifiedAt:
+                type: [string, "null"]
+                format: date-time
+              orderability:
+                type: string
+                enum: [not_integrated, catalogue_only, capability_pending, native_orderable]
+              attribution:
+                type: array
+                items:
+                  type: string
+        nextCursor:
+          type: [string, "null"]
+
+    Quote:
+      type: object
+      required: [quoteId, currency, subtotal, tax, delivery, total, expiresAt, catalogueVersion]
+      properties:
+        quoteId:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        subtotal:
+          $ref: '#/components/schemas/Money'
+        tax:
+          $ref: '#/components/schemas/Money'
+        delivery:
+          $ref: '#/components/schemas/Money'
+        total:
+          $ref: '#/components/schemas/Money'
+        expiresAt:
+          type: string
+          format: date-time
+        catalogueVersion:
+          type: integer
+
+    OrderView:
+      type: object
+      required: [orderId, orderState, updatedAt]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderState:
+          type: string
+        paymentState:
+          type: [string, "null"]
+        fulfilmentState:
+          type: [string, "null"]
+        updatedAt:
+          type: string
+          format: date-time
+
+    OrderCreated:
+      allOf:
+        - $ref: '#/components/schemas/OrderView'
+        - type: object
+          properties:
+            guestAccessGrant:
+              type: string
+              description: Returned once for guest checkout and never again.
+
+    OrderEvents:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [eventType, occurredAt]
+            properties:
+              eventType:
+                type: string
+              occurredAt:
+                type: string
+                format: date-time
+              message:
+                type: string
+              source:
+                type: string
+                enum: [merchant, fulfilment, payment, arrival_operator]

@@ -12,3 +12,6 @@ Each ADR should include:
 - Date and decision owner.
 
 Do not create ADRs to document trivial implementation details.
+
+Current proposals:
+- [0004 — Gate ordering by market and route capability](0004-market-scoped-orderability.md)

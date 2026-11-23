@@ -48,3 +48,7 @@ Evaluate geographic and temporal models only with legitimate, authorized data. E
 ## Evidence standard
 
 Do not describe a provider, algorithm, dataset or market as supported based on an undated blog post or marketing page alone. Prefer official technical documentation, current contractual terms and reproducible experiments.
+
+## Current technical research snapshot
+
+See [provider and data-source comparison](research/PROVIDERS.md) and [algorithm research roadmap](research/ALGORITHMS.md), reviewed 2026-11-23. These are dated technical findings, not contract/legal approvals. Refresh sources and re-review before provider selection or launch.

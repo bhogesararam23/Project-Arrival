@@ -2,6 +2,8 @@
 
 This is a dependency-ordered roadmap, not a promise of dates.
 
+The detailed priorities, acceptance criteria, research dependencies and testing requirements are in [BACKLOG.md](BACKLOG.md). Provider research and algorithm baselines are in [research](research/PROVIDERS.md) and [algorithm specifications](research/ALGORITHMS.md).
+
 ## Foundation
 - [ ] Repository governance and AI collaboration workflow.
 - [ ] ADR process and language adoption policy.
