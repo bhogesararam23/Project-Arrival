@@ -1,0 +1,38 @@
+name: Documentation checks
+
+on:
+  pull_request:
+    paths:
+      - "**.md"
+      - ".github/workflows/docs-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - ".github/workflows/docs-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  markdown-whitespace:
+    name: Markdown whitespace and conflict-marker check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check trailing whitespace and conflict markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=$(git ls-files '*.md')
+          test -n "$files"
+          if grep -nE '^(<<<<<<< |=======|>>>>>>> )' $files; then
+            echo "Merge conflict markers found."
+            exit 1
+          fi
+          if grep -nE '[[:blank:]]+$' $files | grep -vE ':[[:space:]]*<!--'; then
+            echo "Trailing whitespace found in Markdown."
+            exit 1
+          fi
