@@ -32,7 +32,11 @@ jobs:
             echo "Merge conflict markers found."
             exit 1
           fi
-          if grep -nE '[[:blank:]]+$' $files | grep -vE ':[[:space:]]*<!--'; then
-            echo "Trailing whitespace found in Markdown."
+          # Two trailing spaces are valid Markdown hard breaks; flag three or more.
+          if grep -nE '[[:blank:]]{3,}
+            exit 1
+          fi
+ $files; then
+            echo "Unexpected trailing whitespace found in Markdown."
             exit 1
           fi
