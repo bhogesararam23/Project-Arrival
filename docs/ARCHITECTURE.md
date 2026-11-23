@@ -76,3 +76,7 @@ Vendor choice and free-tier viability must be validated against current pricing,
 ## 8. Failure behavior
 
 Provider timeouts, stale catalogues, expired quotes, payment uncertainty, merchant rejection, courier unavailability and webhook duplication must be explicit states. Never silently treat an uncertain transaction as successful. Use reconciliation and operational queues for ambiguous outcomes.
+
+## 9. Detailed implementation proposal
+
+Module boundaries, topology, cross-border gate, provider findings, proposed schema/API and rollout criteria are maintained in the [Technical Implementation Blueprint](IMPLEMENTATION_BLUEPRINT.md). Provider interface shapes are in [Integration Interfaces](INTEGRATION_INTERFACES.md). These proposals do not indicate that integrations exist.

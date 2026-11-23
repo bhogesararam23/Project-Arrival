@@ -37,3 +37,5 @@ A provider integration should declare:
 - supported countries, currencies and service areas.
 
 Unsupported methods must return explicit unsupported-capability results.
+
+See the proposed [versioned provider interfaces](INTEGRATION_INTERFACES.md) and [market-scoped capability decision](ADR/0004-market-scoped-orderability.md). Provider support in research is documentation evidence only, never an Arrival integration status.
