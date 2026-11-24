@@ -68,6 +68,42 @@ export class Money {
     return new Money(BigInt(scaled), this.currency);
   }
 
+  /**
+   * Allocate monetary amounts across integer ratios without rounding loss (e.g. tax allocation, fees).
+   * Remainder minor units are distributed to the first parties.
+   */
+  allocate(ratios: number[]): Money[] {
+    if (ratios.length === 0) {
+      return [];
+    }
+    const totalRatio = ratios.reduce((sum, r) => sum + r, 0);
+    if (totalRatio <= 0) {
+      throw new Error('Total allocation ratio must be positive');
+    }
+
+    const totalMinor = this.amountMinor;
+    let remainder = totalMinor;
+    const results: Money[] = [];
+
+    for (const ratio of ratios) {
+      if (ratio < 0) {
+        throw new Error('Allocation ratios cannot be negative');
+      }
+      const share = (totalMinor * BigInt(ratio)) / BigInt(totalRatio);
+      results.push(new Money(share, this.currency));
+      remainder -= share;
+    }
+
+    // Distribute remainder penny by penny to preserve exact sum
+    for (let i = 0; remainder > 0n && i < results.length; i++) {
+      const current = results[i]!;
+      results[i] = new Money(current.amountMinor + 1n, this.currency);
+      remainder -= 1n;
+    }
+
+    return results;
+  }
+
   equals(other: Money): boolean {
     return this.currency === other.currency && this.amountMinor === other.amountMinor;
   }
