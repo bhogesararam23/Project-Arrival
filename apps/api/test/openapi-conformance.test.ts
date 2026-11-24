@@ -34,15 +34,14 @@ describe('OpenAPI 3.1 Contract Conformance', () => {
       expect(openapiYaml).toContain(`${path}:`);
     }
 
-    // Fastify printRoutes gives the route hierarchy
-    const mountedRoutes = app.printRoutes();
-    expect(mountedRoutes).toContain('/v1/guest-sessions');
-    expect(mountedRoutes).toContain('/v1/places/search');
-    expect(mountedRoutes).toContain('/v1/checkout-quotes');
-    expect(mountedRoutes).toContain('/v1/orders');
-    expect(mountedRoutes).toContain('/v1/orders/:orderId');
-    expect(mountedRoutes).toContain('/v1/orders/:orderId/events');
-    expect(mountedRoutes).toContain('/v1/orders/:orderId/cancellations');
+    // Validate using Fastify hasRoute API
+    expect(app.hasRoute({ method: 'POST', url: '/v1/guest-sessions' })).toBe(true);
+    expect(app.hasRoute({ method: 'GET', url: '/v1/places/search' })).toBe(true);
+    expect(app.hasRoute({ method: 'POST', url: '/v1/checkout-quotes' })).toBe(true);
+    expect(app.hasRoute({ method: 'POST', url: '/v1/orders' })).toBe(true);
+    expect(app.hasRoute({ method: 'GET', url: '/v1/orders/:orderId' })).toBe(true);
+    expect(app.hasRoute({ method: 'GET', url: '/v1/orders/:orderId/events' })).toBe(true);
+    expect(app.hasRoute({ method: 'POST', url: '/v1/orders/:orderId/cancellations' })).toBe(true);
   });
 
   it('verifies ProblemDetails conforms to RFC 9457 media type application/problem+json', async () => {
