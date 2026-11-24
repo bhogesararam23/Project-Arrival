@@ -66,6 +66,7 @@ describe('Orders and Guest Sessions API endpoints', () => {
     expect(orderCreated.orderState).toBe('submitted');
     expect(orderCreated.paymentState).toBe('authorized');
     expect(orderCreated.guestAccessGrant).toBeDefined();
+    expect(orderCreated.guestCancelGrant).toBeDefined();
 
     // 4. Test idempotency: replaying same request with same key returns identical result
     const replayRes = await app.inject({

@@ -382,6 +382,24 @@ export class InMemoryGuestSessionRepository implements IGuestSessionRepository {
   async getOrderGrantByDigest(digest: string): Promise<GuestOrderGrantRecord | null> {
     return this.grants.get(digest) || null;
   }
+
+  async revokeSession(id: string): Promise<void> {
+    for (const session of this.sessions.values()) {
+      if (session.id === id) {
+        session.revokedAt = new Date().toISOString();
+        break;
+      }
+    }
+  }
+
+  async revokeOrderGrant(id: string): Promise<void> {
+    for (const grant of this.grants.values()) {
+      if (grant.id === id) {
+        grant.revokedAt = new Date().toISOString();
+        break;
+      }
+    }
+  }
 }
 
 export class InMemoryCapabilityRepository implements ICapabilityRepository {
@@ -417,6 +435,90 @@ export class InMemoryIdempotencyRepository implements IIdempotencyRepository {
 
   async save(record: IdempotencyRecord): Promise<void> {
     this.records.set(this.keyOf(record.principalScope, record.operation, record.idempotencyKey), record);
+  }
+
+  async tryReserve(
+    principalScope: string,
+    operation: string,
+    key: string,
+    requestHash: string,
+    lockDurationMs: number
+  ): Promise<{
+    success: boolean;
+    record?: IdempotencyRecord;
+    conflictReason?: 'mismatch' | 'in_progress';
+  }> {
+    const k = this.keyOf(principalScope, operation, key);
+    const existing = this.records.get(k);
+    const now = Date.now();
+
+    if (existing) {
+      if (existing.requestHash !== requestHash) {
+        return { success: false, conflictReason: 'mismatch', record: existing };
+      }
+
+      if (existing.status === 'completed') {
+        return { success: true, record: existing };
+      }
+
+      if (existing.status === 'pending') {
+        const lockExpired = existing.lockedUntil && new Date(existing.lockedUntil).getTime() <= now;
+        if (!lockExpired) {
+          return { success: false, conflictReason: 'in_progress', record: existing };
+        }
+        // Lock expired, lease renewed
+        existing.lockedUntil = new Date(now + lockDurationMs).toISOString();
+        return { success: true, record: existing };
+      }
+
+      if (existing.status === 'failed') {
+        // Retry failed operation
+        existing.status = 'pending';
+        existing.lockedUntil = new Date(now + lockDurationMs).toISOString();
+        existing.requestHash = requestHash;
+        return { success: true, record: existing };
+      }
+    }
+
+    const newRecord: IdempotencyRecord = {
+      id: key,
+      principalScope,
+      operation,
+      idempotencyKey: key,
+      requestHash,
+      status: 'pending',
+      lockedUntil: new Date(now + lockDurationMs).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
+    };
+    this.records.set(k, newRecord);
+    return { success: true, record: newRecord };
+  }
+
+  async complete(
+    principalScope: string,
+    operation: string,
+    key: string,
+    status: number,
+    body: unknown
+  ): Promise<void> {
+    const k = this.keyOf(principalScope, operation, key);
+    const existing = this.records.get(k);
+    if (existing) {
+      existing.status = 'completed';
+      existing.responseStatus = status;
+      existing.responseBody = body;
+      existing.lockedUntil = null;
+    }
+  }
+
+  async fail(principalScope: string, operation: string, key: string): Promise<void> {
+    const k = this.keyOf(principalScope, operation, key);
+    const existing = this.records.get(k);
+    if (existing) {
+      existing.status = 'failed';
+      existing.lockedUntil = null;
+    }
   }
 }
 

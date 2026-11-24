@@ -16,13 +16,19 @@ export function errorHandler(error: FastifyError | ArrivalError | Error, request
 
   // Fastify validation errors
   if ('validation' in error && error.validation) {
+    const invalidParams = (error.validation as any[]).map((v) => ({
+      name: v.instancePath ? v.instancePath.replace(/^\//, '') : (v.params?.missingProperty || 'body'),
+      reason: v.message || 'validation failed',
+    }));
+
     const problem: ProblemDetails = {
       type: 'https://arrival.internal/errors/bad-request',
       title: 'Bad Request',
       status: 400,
       detail: error.message,
-      code: 'VALIDATION_ERROR',
+      code: 'INVALID_REQUEST',
       requestId,
+      invalidParams,
     };
     return reply.status(400).type('application/problem+json').send(problem);
   }

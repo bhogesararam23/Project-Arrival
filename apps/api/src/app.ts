@@ -85,8 +85,8 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
   app.register(guestSessionRoutes, { guestRepo });
   app.register(placesRoutes, { discoveryService });
   app.register(catalogueRoutes, { catalogueService });
-  app.register(quotesRoutes, { quoteService, idempotencyRepo });
-  app.register(ordersRoutes, { orderService, idempotencyRepo });
+  app.register(quotesRoutes, { quoteService, idempotencyRepo, guestRepo });
+  app.register(ordersRoutes, { orderService, idempotencyRepo, guestRepo });
 
   return app;
 }
