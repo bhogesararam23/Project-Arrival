@@ -1,11 +1,12 @@
-import { useState, useMemo, type FC } from 'react';
+import { useState, useEffect, useCallback, type FC } from 'react';
 import type { SearchItem } from '@arrival/contracts';
 import { SearchBar } from './components/SearchBar.js';
 import { RestaurantCard } from './components/RestaurantCard.js';
 import { RestaurantDetail } from './components/RestaurantDetail.js';
+import { defaultApiClient, ApiClientError } from './api/client.js';
 import './styles/app.css';
 
-// Synthetic discovery items matching backend API fixtures
+// Baseline synthetic discovery items matching backend API fixtures for fast initial render
 const INITIAL_ITEMS: SearchItem[] = [
   {
     venueId: 'e1000000-0000-4000-a000-000000000001',
@@ -45,24 +46,51 @@ const INITIAL_ITEMS: SearchItem[] = [
 export const App: FC = () => {
   const [query, setQuery] = useState('');
   const [country, setCountry] = useState('');
+  const [items, setItems] = useState<SearchItem[]>(INITIAL_ITEMS);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<SearchItem | null>(null);
   const [cartItems, setCartItems] = useState<Array<{ name: string; priceFormatted: string }>>([]);
 
-  const filteredItems = useMemo(() => {
-    return INITIAL_ITEMS.filter((item) => {
-      if (country && item.countryCode !== country) {
-        return false;
+  const executeSearch = useCallback(async (searchQuery: string, searchCountry: string) => {
+    // If empty query and no country filter, display initial verified pilot fixtures
+    if (!searchQuery.trim() && !searchCountry) {
+      setItems(INITIAL_ITEMS);
+      setErrorMessage(null);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const q = searchQuery.trim() || 'bakery';
+      const res = await defaultApiClient.searchPlaces({
+        q,
+        ...(searchCountry ? { country: searchCountry } : {}),
+      });
+      setItems(res.items);
+    } catch (err: unknown) {
+      if (err instanceof ApiClientError) {
+        setErrorMessage(err.problem?.detail || err.message);
+      } else if (err instanceof Error) {
+        setErrorMessage(err.message);
+      } else {
+        setErrorMessage('Failed to connect to discovery service');
       }
-      if (query.trim()) {
-        const q = query.toLowerCase();
-        return (
-          item.name.toLowerCase().includes(q) ||
-          item.address.toLowerCase().includes(q)
-        );
-      }
-      return true;
-    });
-  }, [query, country]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      executeSearch(query, country);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [query, country, executeSearch]);
 
   const handleAddToCart = (name: string, priceFormatted: string) => {
     setCartItems((prev) => [...prev, { name, priceFormatted }]);
@@ -90,6 +118,15 @@ export const App: FC = () => {
       </header>
 
       <main>
+        {/* Synthetic provenance alert banner */}
+        <div className="synthetic-banner" role="status" aria-label="Synthetic Data Notice">
+          <span style={{ fontSize: '16px' }}>&#9888;</span>
+          <span>
+            <strong>Synthetic Test Environment:</strong> All venues, menus, and prices are sandbox fixtures.
+            Live financial transactions and physical fulfillment are disabled.
+          </span>
+        </div>
+
         <SearchBar
           query={query}
           country={country}
@@ -97,29 +134,64 @@ export const App: FC = () => {
           onCountryChange={setCountry}
         />
 
+        {/* Error State Banner with Retry */}
+        {errorMessage && (
+          <div className="state-error" role="alert">
+            <div>
+              <strong>Search Error: </strong>
+              <span>{errorMessage}</span>
+            </div>
+            <button className="retry-btn" onClick={() => executeSearch(query, country)}>
+              Retry
+            </button>
+          </div>
+        )}
+
         <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
-            Showing {filteredItems.length} verified discovery destination(s)
-          </span>
-          <span style={{ fontSize: '12px', color: '#f59e0b' }}>
-            ⚠ Pilot Environment — Cross-border ordering strictly fail-closed
+          <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
+            {isLoading
+              ? 'Searching verified venues...'
+              : `${items.length} verified venue${items.length === 1 ? '' : 's'} available`}
           </span>
         </div>
 
-        <div className="restaurants-grid">
-          {filteredItems.map((item) => (
-            <RestaurantCard key={item.locationId} item={item} onSelect={setSelectedItem} />
-          ))}
-        </div>
+        {/* Loading Spinner */}
+        {isLoading && (
+          <div className="state-loading">
+            <div className="loading-spinner" />
+            <p>Querying verified merchant discovery registry...</p>
+          </div>
+        )}
 
-        {selectedItem && (
-          <RestaurantDetail
-            item={selectedItem}
-            onClose={() => setSelectedItem(null)}
-            onAddToCart={handleAddToCart}
-          />
+        {/* Empty State */}
+        {!isLoading && !errorMessage && items.length === 0 && (
+          <div className="state-empty">
+            <h3>No restaurants found</h3>
+            <p>No verified venues matched &ldquo;{query}&rdquo; in the selected destination.</p>
+          </div>
+        )}
+
+        {/* Results Grid */}
+        {!isLoading && items.length > 0 && (
+          <div className="restaurant-grid">
+            {items.map((item) => (
+              <RestaurantCard
+                key={item.locationId}
+                item={item}
+                onSelect={setSelectedItem}
+              />
+            ))}
+          </div>
         )}
       </main>
+
+      {selectedItem && (
+        <RestaurantDetail
+          item={selectedItem}
+          onClose={() => setSelectedItem(null)}
+          onAddToCart={handleAddToCart}
+        />
+      )}
     </div>
   );
 };
