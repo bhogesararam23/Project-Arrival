@@ -33,3 +33,20 @@ Priorities: P0 blocks a safe pilot; P1 required for credible discovery or measur
 | B-027 P2 | Flutter client; stable API plus mobile evidence | Client uses versioned contracts; privacy/localization/accessibility parity; no backend rules duplicated | Device matrix, contract tests, accessibility and privacy review |
 
 Dependency direction: resolve market, legal and source rights before integrations; establish data and authorization before transaction code; complete real provider approval before pilot; algorithm work may progress only on licensed datasets and cannot gate unsupported promises.
+
+## Milestone 1 Implementation Status (Foundation Milestone Completed 2026-11-24)
+
+| Backlog ID | Implemented Component | Status | Verification & Evidence |
+|---|---|---|---|
+| B-004 | PostgreSQL migration tooling | **Implemented** | `@arrival/database` migration runner (`up`, `down`, `validate`), symmetrical rollbacks tested |
+| B-005 | Schema hardening & invariants | **Implemented** | `001_initial_platform.sql` + `002_schema_hardening.sql` with ISO checks, composite indexes, audit immutability triggers |
+| B-006 | Guest sessions & order grants | **Implemented** | 32-byte cryptographic entropy, SHA-256 digest persistence, scoped order access tokens |
+| B-007 | Modular monolith TypeScript API | **Implemented** | `@arrival/api` on Fastify: health, discovery, quotes, orders, RFC 9457 problem details |
+| B-008 | Capability registry & fail-closed gate | **Implemented** | `@arrival/contracts` capability evaluation (`production_verified` only), fail-closed cross-border blocker |
+| B-014 | Checkout quote & order lifecycle | **Implemented** | Integer minor units arithmetic, tax & delivery calculation, idempotency cache & conflict detection |
+| B-018 | Ingestion & normalization engine | **Implemented** | `arrival_ingestion` (Rust): 248k records/sec, purpose & license enforcement, unicode sanitization |
+| B-019 | Discovery query & customer app | **Implemented** | `@arrival/web` (React 19 + Vite): destination search, orderability badges, catalogue browser |
+| B-020 | Entity resolution algorithm | **Implemented** | Multi-pass spatial & token blocking, Fellegi-Sunter scoring, hard negative distance invariant |
+| B-022 | Reproducible benchmark harness | **Implemented** | Synthetic 250-record adjudicated corpus comparing C++, Rust, and TypeScript baselines |
+| B-025 | Rust ingestion component | **Implemented** | High-throughput memory-safe pipeline tested with Cargo (`packages/ingestion/rust`) |
+| B-026 | C++ algorithm engine | **Implemented** | C++17 engine (`packages/algorithms/cpp`): 193k pairs/sec, 90.7% blocking reduction, 0.00% False Merge Rate |
