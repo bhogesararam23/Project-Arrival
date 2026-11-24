@@ -80,3 +80,20 @@ Provider timeouts, stale catalogues, expired quotes, payment uncertainty, mercha
 ## 9. Detailed implementation proposal
 
 Module boundaries, topology, cross-border gate, provider findings, proposed schema/API and rollout criteria are maintained in the [Technical Implementation Blueprint](IMPLEMENTATION_BLUEPRINT.md). Provider interface shapes are in [Integration Interfaces](INTEGRATION_INTERFACES.md). These proposals do not indicate that integrations exist.
+
+## 10. Implemented Software Foundation
+
+The project is structured as a pnpm monorepo with strict TypeScript, Rust, and C++ packages:
+
+```
+project-arrival/
+├── apps/
+│   ├── api/            # Fastify modular monolith API (OpenAPI 3.1, health, discovery, quotes, orders, idempotency)
+│   └── web/            # Customer discovery application (React 19 + Vite, destination search, orderability badges)
+├── packages/
+│   ├── contracts/      # Domain models, Money value object, ISO parsers, RFC 9457 errors, capabilities
+│   ├── database/       # PostgreSQL/PostGIS migrations (001 base, 002 hardening), symmetrical rollbacks, CLI migrator
+│   ├── algorithms/     # R-006 Entity Resolution baseline (TS) and high-throughput C++ engine with reproducible benchmarks
+│   └── ingestion/      # High-throughput, memory-safe Rust ingestion & license verification engine
+└── docs/               # Technical blueprint, architecture decision records (ADRs), specifications
+```

@@ -64,9 +64,52 @@ The initial architecture is a modular TypeScript monolith with explicit domain b
 
 ## Current status
 
-**Stage: project foundation and research.** This repository establishes product direction, engineering conventions, and architectural constraints. No production merchant, payment, delivery, or global data integration should be assumed to exist until it is implemented, tested, and documented.
+**Stage: Working, testable software foundation.** The repository contains a tested, strictly-typed monorepo with:
+- Shared domain contracts, Money value object, ISO standard validation, and RFC 9457 errors (`@arrival/contracts`).
+- Symmetrical PostgreSQL/PostGIS migrations, schema hardening checks, and a standalone migration runner (`@arrival/database`).
+- Modular monolith Fastify API implementing health, discovery, quotes, orders, fail-closed capability gates, and idempotency (`@arrival/api`).
+- Responsive React 19 customer discovery application with global destination search, clear orderability capability indicators, and zero fabricated business information (`@arrival/web`).
+- High-throughput, memory-safe Rust data ingestion and license verification engine (`packages/ingestion/rust`).
+- High-performance C++17 entity resolution engine with reproducible benchmark suite (`packages/algorithms/cpp`).
 
-Every capability must be labelled as planned, prototyped, sandbox-tested, or production-verified.
+## Getting Started
+
+### Prerequisites
+- Node.js 22+ (verified on Node 24)
+- pnpm 10+
+- Rust & Cargo (stable)
+- C++17 compatible compiler (MSVC on Windows, GCC/Clang on Linux/macOS)
+
+### Quick Start
+
+```bash
+# 1. Install all dependencies across the monorepo
+pnpm install
+
+# 2. Run all unit and integration test suites
+pnpm test
+
+# 3. Typecheck all packages
+pnpm typecheck
+
+# 4. Build all packages and applications
+pnpm build
+
+# 5. Run database migration validator
+pnpm db:validate
+
+# 6. Run the entity resolution algorithm benchmark
+pnpm benchmark
+
+# 7. Run the Rust ingestion benchmark
+cargo run --release --manifest-path packages/ingestion/rust/Cargo.toml
+
+# 8. Start the API server in development mode
+pnpm --filter @arrival/api dev
+
+# 9. Start the Customer Discovery web application
+pnpm --filter @arrival/web dev
+```
 
 ## Development philosophy
 

@@ -1,0 +1,21 @@
+{
+  "name": "project-arrival",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Project Arrival - Multi-market food discovery and order orchestration platform",
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "benchmark": "pnpm --filter @arrival/algorithms run benchmark",
+    "db:migrate": "pnpm --filter @arrival/database run migrate",
+    "db:validate": "pnpm --filter @arrival/database run validate"
+  },
+  "devDependencies": {
+    "@types/node": "^24.11.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  }
+}
