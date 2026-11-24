@@ -180,25 +180,202 @@ export function blockCandidates(records: EntityRecord[]): Array<[number, number]
   });
 
   const pairSet = new Set<string>();
-  const addBlockPairs = (blocks: Map<string, number[]>) => {
-    for (const indices of blocks.values()) {
-      if (indices.length > 1 && indices.length < 100) {
-        for (let i = 0; i < indices.length; i++) {
-          for (let j = i + 1; j < indices.length; j++) {
-            const a = Math.min(indices[i]!, indices[j]!);
-            const b = Math.max(indices[i]!, indices[j]!);
-            pairSet.add(`${a}:${b}`);
+
+  const addPair = (i: number, j: number) => {
+    const a = Math.min(i, j);
+    const b = Math.max(i, j);
+    pairSet.add(`${a}:${b}`);
+  };
+
+  // Helper to emit pairs for a list, sub-blocking if large
+  const emitPairsWithSubblocking = (
+    indices: number[],
+    subKeyFn: (r: EntityRecord) => string
+  ) => {
+    if (indices.length <= 1) return;
+    if (indices.length < 100) {
+      for (let i = 0; i < indices.length; i++) {
+        for (let j = i + 1; j < indices.length; j++) {
+          addPair(indices[i]!, indices[j]!);
+        }
+      }
+    } else {
+      // Large block: sub-block by secondary attribute instead of dropping
+      const subBuckets = new Map<string, number[]>();
+      for (const idx of indices) {
+        const subKey = subKeyFn(records[idx]!);
+        const list = subBuckets.get(subKey) || [];
+        list.push(idx);
+        subBuckets.set(subKey, list);
+      }
+      for (const subList of subBuckets.values()) {
+        if (subList.length > 1) {
+          for (let i = 0; i < subList.length; i++) {
+            for (let j = i + 1; j < subList.length; j++) {
+              addPair(subList[i]!, subList[j]!);
+            }
           }
         }
       }
     }
   };
 
-  addBlockPairs(spatialBlocks);
-  addBlockPairs(nameBlocks);
+  // 1. Spatial blocking with Moore neighborhood (adjacent 3x3 cells) for boundary recall
+  // Forward neighbor offsets to evaluate each cell pair exactly once:
+  // (0, 1), (1, -1), (1, 0), (1, 1)
+  const forwardNeighbors: Array<[number, number]> = [
+    [0, 1],
+    [1, -1],
+    [1, 0],
+    [1, 1],
+  ];
+
+  for (const [geoKey, indices] of spatialBlocks.entries()) {
+    // Intra-cell pairs
+    emitPairsWithSubblocking(indices, (r) =>
+      r.normalizedName.length >= 2 ? r.normalizedName.substring(0, 2) : '__short'
+    );
+
+    // Cross-cell pairs with forward neighbors
+    const parts = geoKey.split('_');
+    const countryCode = parts[0]!;
+    const latCell = Number(parts[1]!);
+    const lonCell = Number(parts[2]!);
+
+    for (const [dLat, dLon] of forwardNeighbors) {
+      const neighborKey = `${countryCode}_${latCell + dLat}_${lonCell + dLon}`;
+      const neighborIndices = spatialBlocks.get(neighborKey);
+      if (!neighborIndices || neighborIndices.length === 0) continue;
+
+      // If either block is large, constrain by secondary attribute
+      const bothSmall = indices.length < 100 && neighborIndices.length < 100;
+      if (bothSmall) {
+        for (const i of indices) {
+          for (const j of neighborIndices) {
+            addPair(i, j);
+          }
+        }
+      } else {
+        // Sub-block match by 2-char prefix
+        const neighborPrefixMap = new Map<string, number[]>();
+        for (const j of neighborIndices) {
+          const recB = records[j]!;
+          const pfx = recB.normalizedName.length >= 2 ? recB.normalizedName.substring(0, 2) : '__';
+          const list = neighborPrefixMap.get(pfx) || [];
+          list.push(j);
+          neighborPrefixMap.set(pfx, list);
+        }
+        for (const i of indices) {
+          const recA = records[i]!;
+          const pfx = recA.normalizedName.length >= 2 ? recA.normalizedName.substring(0, 2) : '__';
+          const matching = neighborPrefixMap.get(pfx);
+          if (matching) {
+            for (const j of matching) {
+              addPair(i, j);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Name prefix blocking
+  for (const indices of nameBlocks.values()) {
+    emitPairsWithSubblocking(indices, (r) => {
+      const latCell = Math.round(r.latitude * 100);
+      const lonCell = Math.round(r.longitude * 100);
+      return `${latCell}_${lonCell}`;
+    });
+  }
 
   return Array.from(pairSet).map((p) => {
     const [a, b] = p.split(':').map(Number);
     return [a!, b!];
   });
+}
+
+export function evaluatePairs(
+  records: EntityRecord[],
+  groundTruthMatches: Set<string>,
+  _knownHardNegatives: Set<string> = new Set(),
+  autoMergeThreshold = 0.85
+): BenchmarkMetrics {
+  const start = performance.now();
+  const n = records.length;
+  const totalPossiblePairs = (n * (n - 1)) / 2;
+
+  const candidatePairs = blockCandidates(records);
+  const blockedCandidates = candidatePairs.length;
+
+  const predictedMatches = new Set<string>();
+
+  for (const [i, j] of candidatePairs) {
+    const a = records[i]!;
+    const b = records[j]!;
+
+    const scoreResult = scoreEntityPair(a, b);
+    const predicted = scoreResult.compositeScore >= autoMergeThreshold && !scoreResult.isHardNegative;
+
+    if (predicted) {
+      const minId = a.id < b.id ? a.id : b.id;
+      const maxId = a.id < b.id ? b.id : a.id;
+      predictedMatches.add(`${minId}<->${maxId}`);
+    }
+  }
+
+  // Canonicalize groundTruthMatches so ordering of idA and idB does not matter
+  const canonicalTruth = new Set<string>();
+  for (const pair of groundTruthMatches) {
+    const [idA, idB] = pair.split('<->');
+    if (idA && idB) {
+      const minId = idA < idB ? idA : idB;
+      const maxId = idA < idB ? idB : idA;
+      canonicalTruth.add(`${minId}<->${maxId}`);
+    }
+  }
+
+  let tp = 0;
+  let fn = 0;
+  for (const truePair of canonicalTruth) {
+    if (predictedMatches.has(truePair)) {
+      tp++;
+    } else {
+      fn++;
+    }
+  }
+
+  let fp = 0;
+  for (const predPair of predictedMatches) {
+    if (!canonicalTruth.has(predPair)) {
+      fp++;
+    }
+  }
+
+  const totalNonMatches = totalPossiblePairs - canonicalTruth.size;
+  const tn = Math.max(0, totalNonMatches - fp);
+
+  const elapsedMs = performance.now() - start;
+
+  const precision = tp + fp > 0 ? tp / (tp + fp) : 1.0;
+  const recall = tp + fn > 0 ? tp / (tp + fn) : 1.0;
+  const f1Score = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0.0;
+  const falseMergeRate = totalNonMatches > 0 ? fp / totalNonMatches : 0.0;
+  const blockingReductionRatio = totalPossiblePairs > 0 ? 1.0 - blockedCandidates / totalPossiblePairs : 1.0;
+  const throughputPairsPerSec = elapsedMs > 0 ? blockedCandidates / (elapsedMs / 1000) : 0;
+
+  return {
+    totalPossiblePairs,
+    candidatePairsBlocked: blockedCandidates,
+    truePositives: tp,
+    falsePositives: fp,
+    falseNegatives: fn,
+    trueNegatives: tn,
+    precision,
+    recall,
+    f1Score,
+    falseMergeRate,
+    blockingReductionRatio,
+    elapsedMs,
+    throughputPairsPerSec,
+  };
 }

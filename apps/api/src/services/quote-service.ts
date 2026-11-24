@@ -14,6 +14,7 @@ import type {
   ICapabilityRepository,
 } from '../repositories/interfaces.js';
 import type { IFulfilmentAdapter } from '../adapters/provider-adapters.js';
+import { DefaultPricingPolicy, type IPricingPolicy } from './pricing-policy.js';
 
 export class QuoteService {
   constructor(
@@ -22,6 +23,7 @@ export class QuoteService {
     private readonly quotesRepo: IQuotesRepository,
     private readonly capabilityRepo: ICapabilityRepository,
     private readonly fulfilmentAdapter: IFulfilmentAdapter,
+    private readonly pricingPolicy: IPricingPolicy = new DefaultPricingPolicy(),
     private readonly quoteTtlSeconds = 900
   ) {}
 
@@ -62,9 +64,17 @@ export class QuoteService {
       );
     }
 
-    // 4. Calculate subtotal in minor units
+    // 4. Calculate subtotal in minor units and validate modifiers
     const itemMap = new Map(catalogue.items.map((i) => [i.id, i]));
     let subtotal = Money.zero(catalogue.currency);
+    const enrichedItems: Array<{
+      menuItemId: string;
+      name: string;
+      quantity: number;
+      unitPriceMinor: string;
+      totalPriceMinor: string;
+      modifierOptionIds?: string[];
+    }> = [];
 
     for (const line of request.items) {
       const item = itemMap.get(line.menuItemId);
@@ -78,20 +88,73 @@ export class QuoteService {
         throw ArrivalError.badRequest(`Invalid line quantity: ${line.quantity}`);
       }
 
-      const linePrice = Money.fromJson(item.price).multiply(line.quantity);
-      subtotal = subtotal.add(linePrice);
+      let unitPrice = Money.fromJson(item.price);
+      const selectedModIds = new Set(line.modifierOptionIds || []);
+      const claimedModIds = new Set<string>();
+
+      // Validate modifier groups for this item
+      for (const group of item.modifierGroups || []) {
+        const optionMap = new Map(group.options.map((o) => [o.id, o]));
+        let selectionsInGroup = 0;
+
+        for (const optId of selectedModIds) {
+          const opt = optionMap.get(optId);
+          if (opt) {
+            if (!opt.available) {
+              throw ArrivalError.unprocessableEntity(
+                `Modifier option "${opt.name}" in group "${group.name}" is currently unavailable`
+              );
+            }
+            selectionsInGroup++;
+            claimedModIds.add(optId);
+            unitPrice = unitPrice.add(Money.fromJson(opt.priceDelta));
+          }
+        }
+
+        if (selectionsInGroup < group.minimumSelections) {
+          throw ArrivalError.badRequest(
+            `Modifier group "${group.name}" requires at least ${group.minimumSelections} selection(s), but ${selectionsInGroup} selected`
+          );
+        }
+        if (selectionsInGroup > group.maximumSelections) {
+          throw ArrivalError.badRequest(
+            `Modifier group "${group.name}" allows at most ${group.maximumSelections} selection(s), but ${selectionsInGroup} selected`
+          );
+        }
+      }
+
+      // Check for orphan modifier IDs not matching any group
+      for (const optId of selectedModIds) {
+        if (!claimedModIds.has(optId)) {
+          throw ArrivalError.badRequest(
+            `Modifier option "${optId}" does not belong to any modifier group for item "${item.name}"`
+          );
+        }
+      }
+
+      const lineTotal = unitPrice.multiply(line.quantity);
+      subtotal = subtotal.add(lineTotal);
+
+      enrichedItems.push({
+        menuItemId: item.id,
+        name: item.name,
+        quantity: line.quantity,
+        unitPriceMinor: unitPrice.amountMinor.toString(),
+        totalPriceMinor: lineTotal.amountMinor.toString(),
+        ...(line.modifierOptionIds ? { modifierOptionIds: line.modifierOptionIds } : {}),
+      });
     }
 
-    // 5. Calculate tax and fees
-    // In UK pilot: 20% VAT inclusive/derived
-    const tax = subtotal.multiply(0.2);
-    const serviceFee = new Money(50n, catalogue.currency); // 50p service fee
+    // 5. Calculate tax and fees via injectable pricing policy
+    const tax = this.pricingPolicy.calculateTax(subtotal, destinationCountry, catalogue.currency);
+    const serviceFee = this.pricingPolicy.calculateServiceFee(destinationCountry, catalogue.currency);
 
     // 6. Request delivery quote from fulfilment provider
     const deliveryQuote = await this.fulfilmentAdapter.quoteDelivery({
       pickupCoordinates: location.coordinates,
       destinationCountry,
       currency: catalogue.currency,
+      deliveryAddress: request.destination.address,
     });
 
     const total = subtotal.add(tax).add(deliveryQuote.fee).add(serviceFee);
@@ -113,7 +176,7 @@ export class QuoteService {
     await this.quotesRepo.save(quote, {
       locationId: location.id,
       destinationCountry,
-      items: request.items,
+      items: enrichedItems,
       guestSessionId,
     });
 

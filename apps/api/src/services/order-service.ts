@@ -18,8 +18,10 @@ import type {
   IGuestSessionRepository,
   ICapabilityRepository,
   IPlacesRepository,
+  IOutboxRepository,
 } from '../repositories/interfaces.js';
 import type { IMerchantPosAdapter, IPaymentAdapter } from '../adapters/provider-adapters.js';
+import { parseBearerToken, validateHexToken } from '../middleware/auth.js';
 
 export class OrderService {
   constructor(
@@ -29,7 +31,8 @@ export class OrderService {
     private readonly capabilityRepo: ICapabilityRepository,
     private readonly placesRepo: IPlacesRepository,
     private readonly posAdapter: IMerchantPosAdapter,
-    private readonly paymentAdapter: IPaymentAdapter
+    private readonly paymentAdapter: IPaymentAdapter,
+    private readonly outboxRepo?: IOutboxRepository
   ) {}
 
   async submitOrder(
@@ -104,11 +107,14 @@ export class OrderService {
       throw ArrivalError.unprocessableEntity('Payment authorization was declined by issuer', 'PAYMENT_DECLINED');
     }
 
-    // 4. Generate scoped guest order grant if guest order
+    // 4. Generate scoped guest order grants if guest order
     let guestSecret: string | undefined;
+    let guestCancelSecret: string | undefined;
     if (options.guestSessionId) {
       guestSecret = generateGuestSecret();
-      const grantRecord: GuestOrderGrantRecord = {
+      guestCancelSecret = generateGuestSecret();
+
+      const readGrantRecord: GuestOrderGrantRecord = {
         id: randomUUID(),
         orderId,
         tokenDigest: hashGuestSecret(guestSecret),
@@ -116,7 +122,17 @@ export class OrderService {
         expiresAt: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
         createdAt: new Date().toISOString(),
       };
-      await this.guestRepo.createOrderGrant(grantRecord);
+      await this.guestRepo.createOrderGrant(readGrantRecord);
+
+      const cancelGrantRecord: GuestOrderGrantRecord = {
+        id: randomUUID(),
+        orderId,
+        tokenDigest: hashGuestSecret(guestCancelSecret),
+        scope: 'cancel_order',
+        expiresAt: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+        createdAt: new Date().toISOString(),
+      };
+      await this.guestRepo.createOrderGrant(cancelGrantRecord);
     }
 
     // 5. Create order and outbox records
@@ -127,6 +143,7 @@ export class OrderService {
       fulfilmentState: 'quote_pending',
       updatedAt: new Date().toISOString(),
       ...(guestSecret ? { guestAccessGrant: guestSecret } : {}),
+      ...(guestCancelSecret ? { guestCancelGrant: guestCancelSecret } : {}),
     };
 
     const outboxPayload = {
@@ -139,45 +156,121 @@ export class OrderService {
     await this.orderRepo.createOrder(orderCreated, quote, outboxPayload);
     await this.quotesRepo.markConsumed(quote.quoteId);
 
-    // Forward to POS
-    await this.posAdapter.submitOrder({
+    // Forward to POS with authoritative quoted line prices
+    const posItems = (quoteRecord.items || []).map((i: any) => ({
+      name: i.name || i.menuItemId,
+      quantity: i.quantity,
+      priceMinor: i.unitPriceMinor ? BigInt(i.unitPriceMinor) : 0n,
+    }));
+
+    const posResult = await this.posAdapter.submitOrder({
       merchantLocationId: locationId,
       orderId,
-      items: quoteRecord.items.map((i) => ({ name: i.menuItemId, quantity: i.quantity, priceMinor: 0n })),
+      items: posItems,
       currency: quote.currency,
     });
+
+    if (posResult.status === 'rejected') {
+      // Order state must transition to 'rejected'
+      await this.orderRepo.updateState(orderId, 'rejected');
+      await this.orderRepo.recordEvent(orderId, {
+        eventType: 'order_merchant_rejected',
+        occurredAt: new Date().toISOString(),
+        source: 'merchant',
+        message: 'Merchant POS declined the order submission',
+      });
+
+      // Compensation: refund or void the collected payment
+      await this.paymentAdapter.refundPayment(
+        paymentResult.providerRef,
+        orderTotal,
+        `${options.idempotencyKey}-pos-rejection-refund`
+      );
+
+      // Record compensation event in outbox if available
+      if (this.outboxRepo) {
+        await this.outboxRepo.publish({
+          id: randomUUID(),
+          aggregateType: 'order',
+          aggregateId: orderId,
+          eventType: 'order_compensation_refunded',
+          payload: {
+            orderId,
+            reason: 'POS_REJECTION',
+            providerPaymentRef: paymentResult.providerRef,
+            amount: quote.total,
+          },
+          createdAt: new Date().toISOString(),
+          availableAt: new Date().toISOString(),
+          attempts: 0,
+        });
+      }
+
+      throw ArrivalError.unprocessableEntity(
+        'Merchant POS declined the order submission',
+        'MERCHANT_REJECTED'
+      );
+    }
 
     return orderCreated;
   }
 
   async getOrder(orderId: string, authHeader?: string): Promise<OrderView> {
+    const token = parseBearerToken(authHeader);
+    if (!token || !validateHexToken(token)) {
+      // Prevent order enumeration: return 404
+      throw ArrivalError.notFound(`Order ${orderId} not found`);
+    }
+
+    const digest = hashGuestSecret(token);
+    const grant = await this.guestRepo.getOrderGrantByDigest(digest);
+    if (!grant || grant.orderId !== orderId || grant.revokedAt || new Date(grant.expiresAt).getTime() <= Date.now()) {
+      throw ArrivalError.notFound(`Order ${orderId} not found`);
+    }
+
     const order = await this.orderRepo.getById(orderId);
     if (!order) {
       throw ArrivalError.notFound(`Order ${orderId} not found`);
     }
 
-    // Check authorization: Bearer token must match customer or guest grant
-    if (authHeader) {
-      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-      if (token) {
-        const candidateDigest = hashGuestSecret(token);
-        const grant = await this.guestRepo.getOrderGrantByDigest(candidateDigest);
-        if (grant && grant.orderId === orderId && (!grant.revokedAt) && new Date(grant.expiresAt).getTime() > Date.now()) {
-          return order;
-        }
-      }
-    }
-
-    // Allow in test/open read or return order
     return order;
   }
 
-  async getOrderEvents(orderId: string): Promise<OrderEventsResponse> {
+  async getOrderEvents(orderId: string, authHeader?: string): Promise<OrderEventsResponse> {
+    const token = parseBearerToken(authHeader);
+    if (!token || !validateHexToken(token)) {
+      throw ArrivalError.notFound(`Order ${orderId} not found`);
+    }
+
+    const digest = hashGuestSecret(token);
+    const grant = await this.guestRepo.getOrderGrantByDigest(digest);
+    if (!grant || grant.orderId !== orderId || grant.revokedAt || new Date(grant.expiresAt).getTime() <= Date.now()) {
+      throw ArrivalError.notFound(`Order ${orderId} not found`);
+    }
+
     const events = await this.orderRepo.getEvents(orderId);
     return { items: events };
   }
 
-  async cancelOrder(orderId: string, reason?: string): Promise<OrderView> {
+  async cancelOrder(orderId: string, authHeader?: string, reason?: string): Promise<OrderView> {
+    const token = parseBearerToken(authHeader);
+    if (!token || !validateHexToken(token)) {
+      throw ArrivalError.notFound(`Order ${orderId} not found`);
+    }
+
+    const digest = hashGuestSecret(token);
+    const grant = await this.guestRepo.getOrderGrantByDigest(digest);
+    if (!grant || grant.orderId !== orderId || grant.revokedAt || new Date(grant.expiresAt).getTime() <= Date.now()) {
+      throw ArrivalError.notFound(`Order ${orderId} not found`);
+    }
+
+    if (grant.scope !== 'cancel_order') {
+      throw ArrivalError.forbidden(
+        'Insufficient permissions to cancel order. Scope cancel_order is required.',
+        'INSUFFICIENT_SCOPE'
+      );
+    }
+
     const order = await this.orderRepo.getById(orderId);
     if (!order) {
       throw ArrivalError.notFound(`Order ${orderId} not found`);

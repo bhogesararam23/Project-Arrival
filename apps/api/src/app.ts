@@ -8,6 +8,17 @@ import { catalogueRoutes } from './routes/catalogues.js';
 import { quotesRoutes } from './routes/quotes.js';
 import { ordersRoutes } from './routes/orders.js';
 
+import type {
+  IPlacesRepository,
+  ICatalogueRepository,
+  IQuotesRepository,
+  IOrderRepository,
+  IGuestSessionRepository,
+  ICapabilityRepository,
+  IIdempotencyRepository,
+  IOutboxRepository,
+} from './repositories/interfaces.js';
+
 import {
   InMemoryPlacesRepository,
   InMemoryCatalogueRepository,
@@ -18,6 +29,18 @@ import {
   InMemoryIdempotencyRepository,
   InMemoryOutboxRepository,
 } from './repositories/in-memory.js';
+
+import {
+  PgPlacesRepository,
+  PgCatalogueRepository,
+  PgQuotesRepository,
+  PgOrderRepository,
+  PgGuestSessionRepository,
+  PgCapabilityRepository,
+  PgIdempotencyRepository,
+  PgOutboxRepository,
+  type DatabasePool,
+} from '@arrival/database';
 
 import {
   MockMerchantPosAdapter,
@@ -31,14 +54,15 @@ import { QuoteService } from './services/quote-service.js';
 import { OrderService } from './services/order-service.js';
 
 export interface BuildAppOptions {
-  placesRepo?: InMemoryPlacesRepository;
-  catalogueRepo?: InMemoryCatalogueRepository;
-  quotesRepo?: InMemoryQuotesRepository;
-  orderRepo?: InMemoryOrderRepository;
-  guestRepo?: InMemoryGuestSessionRepository;
-  capabilityRepo?: InMemoryCapabilityRepository;
-  idempotencyRepo?: InMemoryIdempotencyRepository;
-  outboxRepo?: InMemoryOutboxRepository;
+  pgPool?: DatabasePool;
+  placesRepo?: IPlacesRepository;
+  catalogueRepo?: ICatalogueRepository;
+  quotesRepo?: IQuotesRepository;
+  orderRepo?: IOrderRepository;
+  guestRepo?: IGuestSessionRepository;
+  capabilityRepo?: ICapabilityRepository;
+  idempotencyRepo?: IIdempotencyRepository;
+  outboxRepo?: IOutboxRepository;
 }
 
 export function buildApp(opts?: BuildAppOptions): FastifyInstance {
@@ -46,14 +70,25 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
     logger: false, // We use our structured logger in middleware
   });
 
-  // Repositories
-  const placesRepo = opts?.placesRepo || new InMemoryPlacesRepository();
-  const catalogueRepo = opts?.catalogueRepo || new InMemoryCatalogueRepository();
-  const quotesRepo = opts?.quotesRepo || new InMemoryQuotesRepository();
-  const orderRepo = opts?.orderRepo || new InMemoryOrderRepository();
-  const guestRepo = opts?.guestRepo || new InMemoryGuestSessionRepository();
-  const capabilityRepo = opts?.capabilityRepo || new InMemoryCapabilityRepository();
-  const idempotencyRepo = opts?.idempotencyRepo || new InMemoryIdempotencyRepository();
+  const pool = opts?.pgPool;
+
+  // Repositories: use PostgreSQL if pool is provided, otherwise in-memory test doubles
+  const placesRepo: IPlacesRepository =
+    opts?.placesRepo || (pool ? new PgPlacesRepository(pool) : new InMemoryPlacesRepository());
+  const catalogueRepo: ICatalogueRepository =
+    opts?.catalogueRepo || (pool ? new PgCatalogueRepository(pool) : new InMemoryCatalogueRepository());
+  const quotesRepo: IQuotesRepository =
+    opts?.quotesRepo || (pool ? new PgQuotesRepository(pool) : new InMemoryQuotesRepository());
+  const orderRepo: IOrderRepository =
+    opts?.orderRepo || (pool ? new PgOrderRepository(pool) : new InMemoryOrderRepository());
+  const guestRepo: IGuestSessionRepository =
+    opts?.guestRepo || (pool ? new PgGuestSessionRepository(pool) : new InMemoryGuestSessionRepository());
+  const capabilityRepo: ICapabilityRepository =
+    opts?.capabilityRepo || (pool ? new PgCapabilityRepository(pool) : new InMemoryCapabilityRepository());
+  const idempotencyRepo: IIdempotencyRepository =
+    opts?.idempotencyRepo || (pool ? new PgIdempotencyRepository(pool) : new InMemoryIdempotencyRepository());
+  const outboxRepo: IOutboxRepository =
+    opts?.outboxRepo || (pool ? new PgOutboxRepository(pool) : new InMemoryOutboxRepository());
 
   // Adapters
   const posAdapter = new MockMerchantPosAdapter();
@@ -71,7 +106,8 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
     capabilityRepo,
     placesRepo,
     posAdapter,
-    paymentAdapter
+    paymentAdapter,
+    outboxRepo
   );
 
   // Set RFC 9457 Error Handler
@@ -85,8 +121,8 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
   app.register(guestSessionRoutes, { guestRepo });
   app.register(placesRoutes, { discoveryService });
   app.register(catalogueRoutes, { catalogueService });
-  app.register(quotesRoutes, { quoteService, idempotencyRepo });
-  app.register(ordersRoutes, { orderService, idempotencyRepo });
+  app.register(quotesRoutes, { quoteService, idempotencyRepo, guestRepo });
+  app.register(ordersRoutes, { orderService, idempotencyRepo, guestRepo });
 
   return app;
 }

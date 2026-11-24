@@ -64,13 +64,13 @@ The initial architecture is a modular TypeScript monolith with explicit domain b
 
 ## Current status
 
-**Stage: Working, testable software foundation.** The repository contains a tested, strictly-typed monorepo with:
-- Shared domain contracts, Money value object, ISO standard validation, and RFC 9457 errors (`@arrival/contracts`).
-- Symmetrical PostgreSQL/PostGIS migrations, schema hardening checks, and a standalone migration runner (`@arrival/database`).
-- Modular monolith Fastify API implementing health, discovery, quotes, orders, fail-closed capability gates, and idempotency (`@arrival/api`).
-- Responsive React 19 customer discovery application with global destination search, clear orderability capability indicators, and zero fabricated business information (`@arrival/web`).
-- High-throughput, memory-safe Rust data ingestion and license verification engine (`packages/ingestion/rust`).
-- High-performance C++17 entity resolution engine with reproducible benchmark suite (`packages/algorithms/cpp`).
+**Stage: Trustworthy Core, Persistence & Research Validation (Milestone 2 Completed).** The platform extends beyond initial software scaffolding with verified production-grade invariants:
+- **Security & Guest Auth:** Cryptographic token digest guest authentication (SHA-256), elimination of simulated tokens, granular scoped access grants (`read_order` vs `cancel_order`), and order enumeration protection (404 on unauthenticated lookup).
+- **Transaction Integrity & Money Arithmetic:** Exact integer minor-unit Money calculations using BigInt without floating-point drift, Hare-Niemeyer largest-remainder allocation (`allocate()`), market-specific pricing rules (UK/EU tax-inclusive VAT vs US/CA destination sales tax), modifier group constraints, and POS failure compensation.
+- **Atomic Two-Phase Idempotency:** Distributed locking with lease expiration (`in_progress` -> `completed`), concurrent conflict rejection (409 Conflict), and payload mismatch rejection (422 Unprocessable Entity).
+- **PostgreSQL Persistence & Migration Safety:** Full suite of typed PostgreSQL repositories, migration concurrent advisory locking (`pg_advisory_lock`), SHA-256 migration file tamper-resistance, and production startup fail-closed invariant without `DATABASE_URL`.
+- **Customer Application Discovery Integration:** React 19 customer web application connected to the backend API (`/v1/places/search`, `/v1/catalogues/:locationId`), supporting live debounced search, loading states, empty/error handling, modifier configuration, and synthetic environment provenance disclaimers.
+- **Algorithm Research & Native Engines:** Entity resolution blocking with 3x3 Moore neighborhood adjacent cell expansion for boundary recall, large cluster sub-blocking, mathematically exact pairwise evaluation metrics (`TP + FP + FN + TN === totalPossiblePairs`), benchmarked against a shared golden evaluation fixture (`golden_evaluation_pairs.json`). High-throughput C++17 engine running at ~298k pairs/sec with 100% precision and 0.00% False Merge Rate. High-throughput Rust ingestion enforcing `max_retention_days` license policies.
 
 ## Getting Started
 

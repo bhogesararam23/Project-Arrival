@@ -26,12 +26,16 @@ export interface WebhookInboxMessage<T = unknown> {
   processingError?: string | null;
 }
 
+export type IdempotencyStatus = 'pending' | 'completed' | 'failed';
+
 export interface IdempotencyRecord<T = unknown> {
   id: string;
   principalScope: string;
   operation: string;
   idempotencyKey: string;
   requestHash: string;
+  status: IdempotencyStatus;
+  lockedUntil?: string | null;
   responseStatus?: number;
   responseBody?: T;
   createdAt: string;

@@ -114,6 +114,7 @@ export interface OrderView {
 
 export interface OrderCreated extends OrderView {
   guestAccessGrant?: string;
+  guestCancelGrant?: string;
 }
 
 export interface OrderEventItem {

@@ -92,8 +92,28 @@ project-arrival/
 │   └── web/            # Customer discovery application (React 19 + Vite, destination search, orderability badges)
 ├── packages/
 │   ├── contracts/      # Domain models, Money value object, ISO parsers, RFC 9457 errors, capabilities
-│   ├── database/       # PostgreSQL/PostGIS migrations (001 base, 002 hardening), symmetrical rollbacks, CLI migrator
+│   ├── database/       # PostgreSQL/PostGIS migrations (001 base, 002 hardening, 003 locking), repositories, advisory locks
 │   ├── algorithms/     # R-006 Entity Resolution baseline (TS) and high-throughput C++ engine with reproducible benchmarks
 │   └── ingestion/      # High-throughput, memory-safe Rust ingestion & license verification engine
 └── docs/               # Technical blueprint, architecture decision records (ADRs), specifications
 ```
+
+## 11. Trustworthy Core & Transaction Integrity Architecture
+
+### 11.1 Cryptographic Guest Authorization & Scoped Grants
+Guest authentication operates entirely on cryptographic token digests. 32-byte secrets (`gst_<hex>`) generated via cryptographically secure pseudo-random number generators (`crypto.randomBytes(32)`) are hashed using SHA-256 before database lookup. Order creation yields separate, cryptographically isolated access grants:
+- `read_order`: Read-only grant for order status tracking and digital receipts.
+- `cancel_order`: Restricted grant permitting order cancellation requests within allowed state machine windows.
+Cross-order and unauthenticated order lookups return 404 Not Found to prevent order ID enumeration.
+
+### 11.2 Atomic Idempotency Lifecycle
+Idempotency records use an atomic two-phase lifecycle (`in_progress` -> `completed`) backed by a distributed database lease (`locked_until`). Concurrent incoming requests for the same idempotency key are rejected with `409 Conflict` (`IDEMPOTENCY_IN_PROGRESS`). Cached completed responses are returned deterministically upon replay. Payload hash mismatches result in `422 Unprocessable Entity` (`IDEMPOTENCY_KEY_PAYLOAD_MISMATCH`).
+
+### 11.3 PostgreSQL Persistence & Migration Safety
+All core domain entities are persisted via PostgreSQL repositories using parameterized queries and strict BigInt minor-unit mapping. Migration execution is protected against concurrent multi-replica deployment races by a PostgreSQL session advisory lock (`pg_advisory_lock(849201849)`). Migration files are cryptographically verified using SHA-256 checksums stored in `schema_migrations`. In production mode (`NODE_ENV === 'production'`), omitting `DATABASE_URL` halts the server immediately.
+
+### 11.4 Exact Money & Market Pricing
+Monetary calculations use integer minor units with exact exponent precision. Fractional currency division is prohibited; multi-party splits use the Hare-Niemeyer largest-remainder method (`allocate()`) to eliminate rounding discrepancies. Pricing engines distinguish tax-inclusive pricing regimes (e.g., UK/EU 20% VAT) from destination-based sales tax regimes (e.g., US/CA 8.875% tax), and strictly enforce modifier group constraints (min/max bounds and mutually exclusive selections).
+
+### 11.5 Spatial Blocking Boundary Recall
+Entity resolution blocking integrates a 3x3 Moore neighborhood (forward neighbor grid cells) to recover candidate pairs that straddle ~1.1km spatial cell boundaries. Dense spatial clusters and high-frequency name blocks are sub-blocked by secondary attributes rather than dropped, maintaining a 0.00% False Merge Rate with 100% recall on golden benchmark truth.

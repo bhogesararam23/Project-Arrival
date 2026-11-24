@@ -1,4 +1,4 @@
-import { Money, ArrivalError, type CountryCode, type CurrencyCode } from '@arrival/contracts';
+import { Money, ArrivalError, type CountryCode, type CurrencyCode, type DeliveryAddressInput } from '@arrival/contracts';
 
 export interface PosOrderSubmission {
   merchantLocationId: string;
@@ -24,14 +24,17 @@ export interface IPaymentAdapter {
   refundPayment(providerRef: string, amount: Money, idempotencyKey: string): Promise<{ refundRef: string }>;
 }
 
+export interface DeliveryQuoteParams {
+  pickupCoordinates: { latitude: number; longitude: number };
+  deliveryCoordinates?: { latitude: number; longitude: number };
+  destinationCountry: CountryCode;
+  currency: CurrencyCode;
+  deliveryAddress?: DeliveryAddressInput;
+}
+
 export interface IFulfilmentAdapter {
   readonly providerKey: string;
-  quoteDelivery(params: {
-    pickupCoordinates: { latitude: number; longitude: number };
-    deliveryCoordinates?: { latitude: number; longitude: number };
-    destinationCountry: CountryCode;
-    currency: CurrencyCode;
-  }): Promise<{ quoteRef: string; fee: Money; estimatedMinutes: number; expiresAt: string }>;
+  quoteDelivery(params: DeliveryQuoteParams): Promise<{ quoteRef: string; fee: Money; estimatedMinutes: number; expiresAt: string }>;
 }
 
 /**
@@ -39,10 +42,22 @@ export interface IFulfilmentAdapter {
  */
 export class MockMerchantPosAdapter implements IMerchantPosAdapter {
   readonly providerKey = 'mock_pos';
+  private shouldRejectNext = false;
+
+  setRejectNext(reject: boolean): void {
+    this.shouldRejectNext = reject;
+  }
 
   async submitOrder(submission: PosOrderSubmission): Promise<{ providerRef: string; status: 'accepted_for_processing' | 'rejected' }> {
     if (!submission.items.length) {
       throw ArrivalError.unprocessableEntity('Cannot submit order with zero items');
+    }
+    if (this.shouldRejectNext) {
+      this.shouldRejectNext = false;
+      return {
+        providerRef: `pos-ref-rejected-${Date.now()}`,
+        status: 'rejected',
+      };
     }
     return {
       providerRef: `pos-ref-${Date.now()}`,

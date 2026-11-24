@@ -14,7 +14,11 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@arrival/contracts": ["../../packages/contracts/src/index.ts"]
+    }
   },
   "include": ["src", "test"]
 }

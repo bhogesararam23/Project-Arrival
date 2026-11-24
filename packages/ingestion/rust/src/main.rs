@@ -9,7 +9,10 @@ fn main() {
         source_name: "Licensed Commercial Partner Feed".to_string(),
         terms_url: "https://arrival.internal/legal/feed-terms".to_string(),
         license_name: "Commercial-Arrival-2026".to_string(),
-        allowed_purposes: vec![AllowedPurpose::DiscoverySearch, AllowedPurpose::MerchantVerification],
+        allowed_purposes: vec![
+            AllowedPurpose::DiscoverySearch,
+            AllowedPurpose::MerchantVerification,
+        ],
         max_retention_days: 90,
         active: true,
     };
@@ -31,6 +34,7 @@ fn main() {
             postal_code: "SW1H 0EX".to_string(),
             latitude: 51.4988,
             longitude: -0.1309,
+            observed_at: None,
         };
 
         let result = pipeline.process_record(record, AllowedPurpose::DiscoverySearch);
@@ -42,5 +46,9 @@ fn main() {
     let records_per_sec = count as f64 / seconds;
 
     println!("Completed in {:.4}s", seconds);
-    println!("Ingestion throughput: {:.0} records/sec ({:.2} µs/record)", records_per_sec, (seconds * 1_000_000.0) / count as f64);
+    println!(
+        "Ingestion throughput: {:.0} records/sec ({:.2} µs/record)",
+        records_per_sec,
+        (seconds * 1_000_000.0) / count as f64
+    );
 }

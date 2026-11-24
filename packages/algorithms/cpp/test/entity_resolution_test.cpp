@@ -9,12 +9,15 @@ void test_string_similarities() {
     // 1. Jaro-Winkler
     double s_identical = EntityResolutionEngine::jaro_winkler_similarity("martha", "martha");
     assert(std::abs(s_identical - 1.0) < 1e-6);
+    (void)s_identical;
 
     double s_close = EntityResolutionEngine::jaro_winkler_similarity("martha", "marhta");
     assert(s_close > 0.94);
+    (void)s_close;
 
     double s_diff = EntityResolutionEngine::jaro_winkler_similarity("pizza", "sushi");
     assert(s_diff < 0.5);
+    (void)s_diff;
 
     // 2. Levenshtein
     assert(EntityResolutionEngine::levenshtein_distance("kitten", "sitting") == 3);
@@ -23,6 +26,7 @@ void test_string_similarities() {
     // 3. Token Jaccard
     double jaccard_overlap = EntityResolutionEngine::token_jaccard_similarity("Westminster Artisan Bakery", "Westminster Bakery");
     assert(jaccard_overlap >= 0.66);
+    (void)jaccard_overlap;
 
     std::cout << "[PASS] String similarity tests passed." << std::endl;
 }
@@ -35,6 +39,7 @@ void test_haversine_distance() {
     // Same point is 0
     double zero_dist = EntityResolutionEngine::haversine_distance_meters(51.5, -0.1, 51.5, -0.1);
     assert(zero_dist < 1e-4);
+    (void)zero_dist;
 
     std::cout << "[PASS] Haversine distance tests passed (" << dist << " m)." << std::endl;
 }
@@ -89,11 +94,84 @@ void test_pair_scoring_and_hard_negatives() {
     std::cout << "[PASS] Pair scoring and hard negative disambiguation passed." << std::endl;
 }
 
+void test_spatial_boundary_and_subblocking() {
+    // 1. Boundary recall across grid cell edges (e.g. lat 51.5049 vs 51.5051)
+    EntityRecord rec1{
+        "boundary-01",
+        "src-1",
+        "Boundary Cafe & Deli",
+        "boundary cafe deli",
+        "45 Boundary Rd, London",
+        "NW8 0JE",
+        "GB",
+        51.5049,
+        -0.1200
+    };
+
+    EntityRecord rec2{
+        "boundary-02",
+        "src-2",
+        "The Boundary Cafe",
+        "boundary cafe",
+        "45 Boundary Road",
+        "NW8 0JE",
+        "GB",
+        51.5051,
+        -0.1201
+    };
+
+    int lat1 = static_cast<int>(std::round(rec1.latitude * 100.0));
+    int lat2 = static_cast<int>(std::round(rec2.latitude * 100.0));
+    assert(lat1 != lat2); // Must be in different primary cells
+    (void)lat1;
+    (void)lat2;
+
+    std::vector<EntityRecord> records = {rec1, rec2};
+    auto blocked_pairs = EntityResolutionEngine::generate_blocked_pairs(records);
+    assert(!blocked_pairs.empty());
+    assert(blocked_pairs[0].first == 0 && blocked_pairs[0].second == 1);
+
+    // 2. Large block sub-blocking (120 records in same spatial cell)
+    std::vector<EntityRecord> large_corpus;
+    for (int i = 0; i < 120; ++i) {
+        std::string pfx = (i < 60) ? "pizza" : "burger";
+        large_corpus.push_back(EntityRecord{
+            "venue-" + std::to_string(i),
+            "src-1",
+            pfx + " Place #" + std::to_string(i),
+            pfx + " place " + std::to_string(i),
+            std::to_string(i) + " High St",
+            "W1D 1BS",
+            "GB",
+            51.5150,
+            -0.1300
+        });
+    }
+
+    auto large_pairs = EntityResolutionEngine::generate_blocked_pairs(large_corpus);
+    assert(!large_pairs.empty()); // Must not silently drop large blocks
+
+    // 3. Metric identity: TP + FP + FN + TN == Total Possible Pairs
+    std::unordered_set<std::string> true_matches = {"boundary-01<->boundary-02"};
+    std::unordered_set<std::string> hard_negs;
+    auto metrics = EntityResolutionEngine::evaluate_pairs(records, true_matches, hard_negs, 0.85);
+
+    assert(metrics.true_positives + metrics.false_positives +
+           metrics.false_negatives + metrics.true_negatives == metrics.total_pairs_evaluated);
+    assert(metrics.true_positives == 1);
+    assert(metrics.false_negatives == 0);
+    assert(metrics.precision == 1.0);
+    assert(metrics.recall == 1.0);
+
+    std::cout << "[PASS] Spatial boundary recall and sub-blocking tests passed." << std::endl;
+}
+
 int main() {
     std::cout << "Running C++ Entity Resolution Unit Tests..." << std::endl;
     test_string_similarities();
     test_haversine_distance();
     test_pair_scoring_and_hard_negatives();
+    test_spatial_boundary_and_subblocking();
     std::cout << "All C++ tests PASSED successfully." << std::endl;
     return 0;
 }

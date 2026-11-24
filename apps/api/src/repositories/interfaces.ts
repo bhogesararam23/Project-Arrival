@@ -45,6 +45,8 @@ export interface IGuestSessionRepository {
   getSessionByDigest(digest: string): Promise<GuestSessionRecord | null>;
   createOrderGrant(grant: GuestOrderGrantRecord): Promise<void>;
   getOrderGrantByDigest(digest: string): Promise<GuestOrderGrantRecord | null>;
+  revokeSession(id: string): Promise<void>;
+  revokeOrderGrant(id: string): Promise<void>;
 }
 
 export interface ICapabilityRepository {
@@ -55,6 +57,25 @@ export interface ICapabilityRepository {
 export interface IIdempotencyRepository {
   get(principalScope: string, operation: string, key: string): Promise<IdempotencyRecord | null>;
   save(record: IdempotencyRecord): Promise<void>;
+  tryReserve(
+    principalScope: string,
+    operation: string,
+    key: string,
+    requestHash: string,
+    lockDurationMs: number
+  ): Promise<{
+    success: boolean;
+    record?: IdempotencyRecord;
+    conflictReason?: 'mismatch' | 'in_progress';
+  }>;
+  complete(
+    principalScope: string,
+    operation: string,
+    key: string,
+    status: number,
+    body: unknown
+  ): Promise<void>;
+  fail(principalScope: string, operation: string, key: string): Promise<void>;
 }
 
 export interface IOutboxRepository {
