@@ -32,7 +32,8 @@ fn test_license_purpose_verification() {
     expect_cleaned_name(&normalized.normalized_name);
 
     // Disallowed purpose fails with PurposeNotAllowed
-    let res_disallowed = pipeline.process_record(valid_record, AllowedPurpose::MerchantVerification);
+    let res_disallowed =
+        pipeline.process_record(valid_record, AllowedPurpose::MerchantVerification);
     assert_eq!(res_disallowed, Err(IngestionError::PurposeNotAllowed));
 }
 

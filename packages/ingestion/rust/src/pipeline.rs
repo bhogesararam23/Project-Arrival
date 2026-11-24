@@ -73,19 +73,25 @@ impl IngestionPipeline {
         }
 
         // 2. Coordinate sanity check
-        if !(-90.0..=90.0).contains(&record.latitude) || !(-180.0..=180.0).contains(&record.longitude) {
+        if !(-90.0..=90.0).contains(&record.latitude)
+            || !(-180.0..=180.0).contains(&record.longitude)
+        {
             return Err(IngestionError::InvalidCoordinates);
         }
 
         // 3. Country code check
-        if record.country_code.len() != 2 || !record.country_code.chars().all(|c| c.is_ascii_uppercase()) {
+        if record.country_code.len() != 2
+            || !record.country_code.chars().all(|c| c.is_ascii_uppercase())
+        {
             return Err(IngestionError::InvalidCountryCode);
         }
 
         // 4. Normalization
         let normalized_name = self.normalizer.normalize_name(&record.raw_name);
         let normalized_postal_code = self.normalizer.normalize_postal_code(&record.postal_code);
-        let geo_cell = self.normalizer.geo_blocking_cell(record.latitude, record.longitude);
+        let geo_cell = self
+            .normalizer
+            .geo_blocking_cell(record.latitude, record.longitude);
 
         // 5. Payload hash
         let digest_input = format!(
