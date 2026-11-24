@@ -1,0 +1,41 @@
+-- 001_initial_platform.down.sql
+-- Complete rollback of base platform schema
+BEGIN;
+
+DROP TABLE IF EXISTS audit_records CASCADE;
+DROP TABLE IF EXISTS outbox CASCADE;
+DROP TABLE IF EXISTS webhook_inbox CASCADE;
+DROP TABLE IF EXISTS provider_capabilities CASCADE;
+DROP TABLE IF EXISTS fulfilment_events CASCADE;
+DROP TABLE IF EXISTS fulfilment_attempts CASCADE;
+DROP TABLE IF EXISTS refunds CASCADE;
+DROP TABLE IF EXISTS payment_events CASCADE;
+DROP TABLE IF EXISTS payment_attempts CASCADE;
+DROP TABLE IF EXISTS order_events CASCADE;
+DROP TABLE IF EXISTS order_items CASCADE;
+DROP TABLE IF EXISTS guest_order_grants CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS checkout_quotes CASCADE;
+DROP TABLE IF EXISTS restricted_delivery_coordinates CASCADE;
+DROP TABLE IF EXISTS delivery_addresses CASCADE;
+DROP TABLE IF EXISTS item_modifier_groups CASCADE;
+DROP TABLE IF EXISTS modifier_options CASCADE;
+DROP TABLE IF EXISTS modifier_groups CASCADE;
+DROP TABLE IF EXISTS menu_items CASCADE;
+DROP TABLE IF EXISTS catalogues CASCADE;
+DROP TABLE IF EXISTS entity_merge_events CASCADE;
+DROP TABLE IF EXISTS source_observations CASCADE;
+DROP TABLE IF EXISTS source_registry CASCADE;
+DROP TABLE IF EXISTS merchant_locations CASCADE;
+DROP TABLE IF EXISTS venues CASCADE;
+DROP TABLE IF EXISTS merchant_users CASCADE;
+DROP TABLE IF EXISTS merchants CASCADE;
+DROP TABLE IF EXISTS idempotency_records CASCADE;
+DROP TABLE IF EXISTS guest_sessions CASCADE;
+DROP TABLE IF EXISTS customers CASCADE;
+
+DROP TYPE IF EXISTS fulfilment_state;
+DROP TYPE IF EXISTS payment_state;
+DROP TYPE IF EXISTS order_state;
+
+COMMIT;
