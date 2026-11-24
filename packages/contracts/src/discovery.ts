@@ -53,12 +53,12 @@ export interface MerchantLocation {
 
 export interface SearchQuery {
   q: string;
-  country?: string;
-  lat?: number;
-  lon?: number;
-  radiusMeters?: number;
-  cursor?: string;
-  limit?: number;
+  country?: string | undefined;
+  lat?: number | undefined;
+  lon?: number | undefined;
+  radiusMeters?: number | undefined;
+  cursor?: string | undefined;
+  limit?: number | undefined;
 }
 
 export interface SearchItem {
