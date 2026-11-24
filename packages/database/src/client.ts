@@ -1,5 +1,7 @@
 import pg from 'pg';
 
+export type DatabasePool = pg.Pool;
+
 export interface DatabaseConfig {
   connectionString?: string | undefined;
   maxPoolSize?: number | undefined;
