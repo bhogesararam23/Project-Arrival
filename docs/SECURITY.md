@@ -36,3 +36,11 @@ Do not store PAN/CVV or raw card data. Use provider-hosted/tokenized payment flo
 9. Supply-chain/dependency compromise.
 
 Security controls must be tested, not merely documented.
+
+## Implemented Security Controls (Milestone 2)
+
+- **Cryptographic Digest Guest Auth:** Guest bearer tokens (`gst_<hex>`) are hashed with SHA-256 before database queries. Plaintext tokens are never stored, logged, or included in query scopes. Simulated mock tokens are prohibited.
+- **Granular Scoped Grants:** Order access separates `read_order` (view-only) from `cancel_order` (cancellation). A read token cannot cancel orders (fails closed with 403 Forbidden `INSUFFICIENT_SCOPE`).
+- **Enumeration Defense:** Lookups with invalid, missing, or mismatched tokens return 404 Not Found rather than 401/403 to prevent attackers from determining whether an order ID exists.
+- **Atomic Two-Phase Idempotency:** Requests atomically acquire an `in_progress` lease on idempotency keys. Concurrent identical requests receive 409 Conflict; payload discrepancies trigger 422 Unprocessable Entity.
+- **Production Startup Fail-Closed:** The application requires a valid `DATABASE_URL` in production environments, throwing a fatal exception if missing to prevent silent fallback to volatile in-memory storage.

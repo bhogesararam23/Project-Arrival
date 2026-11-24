@@ -20,3 +20,5 @@ Current records:
 - [0004 — Gate ordering by market and route capability](0004-market-scoped-orderability.md)
 - [0005 — Database Schema Hardening and Migration Framework](0005-schema-hardening-and-migration-tooling.md)
 - [0006 — Entity Resolution Algorithm Strategy and Native Component Boundaries](0006-entity-resolution-and-native-engine-strategy.md)
+- [0007 — Scoped Guest Order Grants and Atomic Idempotency](0007-scoped-guest-order-grants-and-atomic-idempotency.md)
+- [0008 — PostgreSQL Persistence Layer, Migration Tamper-Resistance, and Production Fail-Fast](0008-postgresql-persistence-and-production-fail-fast.md)
