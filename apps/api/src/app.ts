@@ -54,6 +54,7 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
   const guestRepo = opts?.guestRepo || new InMemoryGuestSessionRepository();
   const capabilityRepo = opts?.capabilityRepo || new InMemoryCapabilityRepository();
   const idempotencyRepo = opts?.idempotencyRepo || new InMemoryIdempotencyRepository();
+  const outboxRepo = opts?.outboxRepo || new InMemoryOutboxRepository();
 
   // Adapters
   const posAdapter = new MockMerchantPosAdapter();
@@ -71,7 +72,8 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
     capabilityRepo,
     placesRepo,
     posAdapter,
-    paymentAdapter
+    paymentAdapter,
+    outboxRepo
   );
 
   // Set RFC 9457 Error Handler

@@ -149,7 +149,34 @@ export const FIXTURE_CATALOGUES: Catalogue[] = [
         available: true,
         allergens: ['gluten'],
         sortOrder: 1,
-        modifierGroups: [],
+        modifierGroups: [
+          {
+            id: 'mg-slicing',
+            name: 'Slicing Preference',
+            minimumSelections: 0,
+            maximumSelections: 1,
+            options: [
+              {
+                id: 'opt-thick-slice',
+                name: 'Thick Sliced',
+                priceDelta: { amountMinor: '50', currency: 'GBP' },
+                available: true,
+              },
+              {
+                id: 'opt-seeded-crust',
+                name: 'Seeded Crust',
+                priceDelta: { amountMinor: '75', currency: 'GBP' },
+                available: true,
+              },
+              {
+                id: 'opt-gluten-free-crust',
+                name: 'Gluten Free Crust',
+                priceDelta: { amountMinor: '100', currency: 'GBP' },
+                available: false,
+              },
+            ],
+          },
+        ],
       },
       {
         id: 'i1000000-0000-4000-a000-000000000002',

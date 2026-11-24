@@ -18,6 +18,7 @@ import type {
   IGuestSessionRepository,
   ICapabilityRepository,
   IPlacesRepository,
+  IOutboxRepository,
 } from '../repositories/interfaces.js';
 import type { IMerchantPosAdapter, IPaymentAdapter } from '../adapters/provider-adapters.js';
 import { parseBearerToken, validateHexToken } from '../middleware/auth.js';
@@ -30,7 +31,8 @@ export class OrderService {
     private readonly capabilityRepo: ICapabilityRepository,
     private readonly placesRepo: IPlacesRepository,
     private readonly posAdapter: IMerchantPosAdapter,
-    private readonly paymentAdapter: IPaymentAdapter
+    private readonly paymentAdapter: IPaymentAdapter,
+    private readonly outboxRepo?: IOutboxRepository
   ) {}
 
   async submitOrder(
@@ -154,13 +156,61 @@ export class OrderService {
     await this.orderRepo.createOrder(orderCreated, quote, outboxPayload);
     await this.quotesRepo.markConsumed(quote.quoteId);
 
-    // Forward to POS
-    await this.posAdapter.submitOrder({
+    // Forward to POS with authoritative quoted line prices
+    const posItems = (quoteRecord.items || []).map((i: any) => ({
+      name: i.name || i.menuItemId,
+      quantity: i.quantity,
+      priceMinor: i.unitPriceMinor ? BigInt(i.unitPriceMinor) : 0n,
+    }));
+
+    const posResult = await this.posAdapter.submitOrder({
       merchantLocationId: locationId,
       orderId,
-      items: quoteRecord.items.map((i) => ({ name: i.menuItemId, quantity: i.quantity, priceMinor: 0n })),
+      items: posItems,
       currency: quote.currency,
     });
+
+    if (posResult.status === 'rejected') {
+      // Order state must transition to 'rejected'
+      await this.orderRepo.updateState(orderId, 'rejected');
+      await this.orderRepo.recordEvent(orderId, {
+        eventType: 'order_merchant_rejected',
+        occurredAt: new Date().toISOString(),
+        source: 'merchant',
+        message: 'Merchant POS declined the order submission',
+      });
+
+      // Compensation: refund or void the collected payment
+      await this.paymentAdapter.refundPayment(
+        paymentResult.providerRef,
+        orderTotal,
+        `${options.idempotencyKey}-pos-rejection-refund`
+      );
+
+      // Record compensation event in outbox if available
+      if (this.outboxRepo) {
+        await this.outboxRepo.publish({
+          id: randomUUID(),
+          aggregateType: 'order',
+          aggregateId: orderId,
+          eventType: 'order_compensation_refunded',
+          payload: {
+            orderId,
+            reason: 'POS_REJECTION',
+            providerPaymentRef: paymentResult.providerRef,
+            amount: quote.total,
+          },
+          createdAt: new Date().toISOString(),
+          availableAt: new Date().toISOString(),
+          attempts: 0,
+        });
+      }
+
+      throw ArrivalError.unprocessableEntity(
+        'Merchant POS declined the order submission',
+        'MERCHANT_REJECTED'
+      );
+    }
 
     return orderCreated;
   }

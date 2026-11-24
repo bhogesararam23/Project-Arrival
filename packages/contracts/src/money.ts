@@ -1,4 +1,4 @@
-import { parseCurrencyCode, type CurrencyCode } from './iso.js';
+import { parseCurrencyCode, getCurrencyExponent, type CurrencyCode } from './iso.js';
 
 /**
  * Money value object representing monetary amounts in minor units (e.g. pence, cents).
@@ -22,6 +22,10 @@ export class Money {
     this.currency = parseCurrencyCode(currency);
   }
 
+  get exponent(): number {
+    return getCurrencyExponent(this.currency);
+  }
+
   static zero(currency: string): Money {
     return new Money(0n, currency);
   }
@@ -34,11 +38,42 @@ export class Money {
     return new Money(json.amountMinor, json.currency);
   }
 
+  /**
+   * Construct Money from major unit amount (e.g. "12.50" GBP -> 1250 minor, "500" JPY -> 500 minor).
+   * Exact integer arithmetic avoids float rounding artifacts.
+   */
+  static fromMajor(major: string | number, currency: string): Money {
+    const exp = getCurrencyExponent(currency);
+    const str = typeof major === 'number' ? major.toFixed(exp) : major.trim();
+    if (exp === 0) {
+      const intVal = BigInt(str.split('.')[0] || '0');
+      return new Money(intVal, currency);
+    }
+    const parts = str.split('.');
+    const intPart = parts[0] || '0';
+    const rawFrac = parts[1] || '';
+    const fracPart = rawFrac.padEnd(exp, '0').slice(0, exp);
+    const combined = `${intPart}${fracPart}`.replace(/^(-?)0+/, '$1') || '0';
+    return new Money(BigInt(combined), currency);
+  }
+
   toJson(): MoneyJson {
     return {
       amountMinor: this.amountMinor.toString(),
       currency: this.currency,
     };
+  }
+
+  toMajorString(): string {
+    const exp = this.exponent;
+    const str = this.amountMinor.toString();
+    if (exp === 0) {
+      return str;
+    }
+    const padded = str.padStart(exp + 1, '0');
+    const intPart = padded.slice(0, padded.length - exp);
+    const fracPart = padded.slice(padded.length - exp);
+    return `${intPart}.${fracPart}`;
   }
 
   private assertSameCurrency(other: Money): void {
@@ -60,12 +95,44 @@ export class Money {
     return new Money(this.amountMinor - other.amountMinor, this.currency);
   }
 
+  /**
+   * Multiply monetary amount by basis points (1 bp = 0.01% = 1/10000).
+   * Uses integer half-up rounding.
+   */
+  multiplyBasisPoints(basisPoints: bigint | number): Money {
+    const bp = typeof basisPoints === 'bigint' ? basisPoints : BigInt(basisPoints);
+    if (bp < 0n) {
+      throw new Error(`Basis points cannot be negative: ${bp}`);
+    }
+    const product = this.amountMinor * bp;
+    const rounded = (product + 5000n) / 10000n;
+    return new Money(rounded, this.currency);
+  }
+
+  /**
+   * Multiply monetary amount by exact integer ratio (numerator / denominator).
+   * Half-up rounding.
+   */
+  multiplyRatio(numerator: bigint | number, denominator: bigint | number): Money {
+    const num = typeof numerator === 'bigint' ? numerator : BigInt(numerator);
+    const den = typeof denominator === 'bigint' ? denominator : BigInt(denominator);
+    if (den <= 0n) {
+      throw new Error('Denominator must be positive');
+    }
+    if (num < 0n) {
+      throw new Error('Numerator cannot be negative');
+    }
+    const product = this.amountMinor * num;
+    const rounded = (product + den / 2n) / den;
+    return new Money(rounded, this.currency);
+  }
+
   multiply(factor: number): Money {
     if (factor < 0) {
       throw new Error(`Multiplication factor cannot be negative: ${factor}`);
     }
-    const scaled = Math.round(Number(this.amountMinor) * factor);
-    return new Money(BigInt(scaled), this.currency);
+    const factorBp = BigInt(Math.round(factor * 10000));
+    return this.multiplyBasisPoints(factorBp);
   }
 
   /**
@@ -108,15 +175,18 @@ export class Money {
     return this.currency === other.currency && this.amountMinor === other.amountMinor;
   }
 
-  format(locale: string = 'en-GB'): string {
-    const majorUnits = Number(this.amountMinor) / 100;
+  format(locale = 'en-GB'): string {
+    const exp = this.exponent;
+    const majorNumber = Number(this.toMajorString());
     try {
       return new Intl.NumberFormat(locale, {
         style: 'currency',
         currency: this.currency,
-      }).format(majorUnits);
+        minimumFractionDigits: exp,
+        maximumFractionDigits: exp,
+      }).format(majorNumber);
     } catch {
-      return `${this.currency} ${majorUnits.toFixed(2)}`;
+      return `${this.currency} ${this.toMajorString()}`;
     }
   }
 }
