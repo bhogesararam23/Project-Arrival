@@ -1,0 +1,249 @@
+{
+  "description": "Project Arrival Adjudicated Golden Evaluation Fixture for Entity Resolution",
+  "version": "1.0.0",
+  "records": [
+    {
+      "id": "venue-cg-01",
+      "sourceKey": "src_osm",
+      "name": "Dishoom Covent Garden",
+      "normalizedName": "dishoom covent garden",
+      "address": "12 Upper St Martins Ln, London",
+      "postalCode": "WC2H 9FB",
+      "countryCode": "GB",
+      "latitude": 51.5127,
+      "longitude": -0.1264
+    },
+    {
+      "id": "venue-cg-02",
+      "sourceKey": "src_partner",
+      "name": "Dishoom - Covent Garden",
+      "normalizedName": "dishoom covent garden",
+      "address": "12 Upper St Martin's Lane",
+      "postalCode": "WC2H 9FB",
+      "countryCode": "GB",
+      "latitude": 51.5128,
+      "longitude": -0.1263
+    },
+    {
+      "id": "venue-bound-01",
+      "sourceKey": "src_osm",
+      "name": "Boundary Cafe & Deli",
+      "normalizedName": "boundary cafe deli",
+      "address": "45 Boundary Rd, London",
+      "postalCode": "NW8 0JE",
+      "countryCode": "GB",
+      "latitude": 51.5049,
+      "longitude": -0.1200
+    },
+    {
+      "id": "venue-bound-02",
+      "sourceKey": "src_partner",
+      "name": "The Boundary Cafe",
+      "normalizedName": "boundary cafe",
+      "address": "45 Boundary Road",
+      "postalCode": "NW8 0JE",
+      "countryCode": "GB",
+      "latitude": 51.5051,
+      "longitude": -0.1201
+    },
+    {
+      "id": "venue-typo-01",
+      "sourceKey": "src_osm",
+      "name": "Wagamama Baker Street",
+      "normalizedName": "wagamama baker street",
+      "address": "104 Baker St, London",
+      "postalCode": "W1U 6TL",
+      "countryCode": "GB",
+      "latitude": 51.5205,
+      "longitude": -0.1565
+    },
+    {
+      "id": "venue-typo-02",
+      "sourceKey": "src_feed",
+      "name": "Wagamamma Baker St",
+      "normalizedName": "wagamamma baker street",
+      "address": "104 Baker Street",
+      "postalCode": "W1U 6TL",
+      "countryCode": "GB",
+      "latitude": 51.5206,
+      "longitude": -0.1563
+    },
+    {
+      "id": "venue-artisan-01",
+      "sourceKey": "src_osm",
+      "name": "St. John Bakery",
+      "normalizedName": "st john bakery",
+      "address": "72 Druid St, London",
+      "postalCode": "SE1 2HH",
+      "countryCode": "GB",
+      "latitude": 51.5005,
+      "longitude": -0.0765
+    },
+    {
+      "id": "venue-artisan-02",
+      "sourceKey": "src_partner",
+      "name": "St John Bakery Ltd",
+      "normalizedName": "st john bakery",
+      "address": "72 Druid Street",
+      "postalCode": "SE1 2HH",
+      "countryCode": "GB",
+      "latitude": 51.5006,
+      "longitude": -0.0766
+    },
+    {
+      "id": "venue-phonetic-01",
+      "sourceKey": "src_osm",
+      "name": "L'Osteria Soho",
+      "normalizedName": "losteria soho",
+      "address": "15 Frith St, London",
+      "postalCode": "W1D 4RE",
+      "countryCode": "GB",
+      "latitude": 51.5135,
+      "longitude": -0.1315
+    },
+    {
+      "id": "venue-phonetic-02",
+      "sourceKey": "src_partner",
+      "name": "Losteria Soho Ltd",
+      "normalizedName": "losteria soho",
+      "address": "15 Frith Street",
+      "postalCode": "W1D 4RE",
+      "countryCode": "GB",
+      "latitude": 51.5136,
+      "longitude": -0.1317
+    },
+    {
+      "id": "chain-pret-01",
+      "sourceKey": "src_osm",
+      "name": "Pret A Manger Oxford Street",
+      "normalizedName": "pret a manger",
+      "address": "298 Oxford St, London",
+      "postalCode": "W1C 1DX",
+      "countryCode": "GB",
+      "latitude": 51.5152,
+      "longitude": -0.1418
+    },
+    {
+      "id": "chain-pret-02",
+      "sourceKey": "src_osm",
+      "name": "Pret A Manger Kings Road",
+      "normalizedName": "pret a manger",
+      "address": "100 Kings Rd, London",
+      "postalCode": "SW3 4TZ",
+      "countryCode": "GB",
+      "latitude": 51.4880,
+      "longitude": -0.1650
+    },
+    {
+      "id": "close-diff-01",
+      "sourceKey": "src_osm",
+      "name": "Honest Burgers Soho",
+      "normalizedName": "honest burgers soho",
+      "address": "4A Meard St, London",
+      "postalCode": "W1F 0EF",
+      "countryCode": "GB",
+      "latitude": 51.5139,
+      "longitude": -0.1332
+    },
+    {
+      "id": "close-diff-02",
+      "sourceKey": "src_partner",
+      "name": "Nando's Soho",
+      "normalizedName": "nandos soho",
+      "address": "10 Meard St, London",
+      "postalCode": "W1F 0EF",
+      "countryCode": "GB",
+      "latitude": 51.5140,
+      "longitude": -0.1330
+    },
+    {
+      "id": "country-diff-01",
+      "sourceKey": "src_osm",
+      "name": "Burger King Leicester Square",
+      "normalizedName": "burger king",
+      "address": "Leicester Square, London",
+      "postalCode": "WC2H 7NA",
+      "countryCode": "GB",
+      "latitude": 51.5103,
+      "longitude": -0.1299
+    },
+    {
+      "id": "country-diff-02",
+      "sourceKey": "src_osm",
+      "name": "Burger King Chatelet",
+      "normalizedName": "burger king",
+      "address": "Place du Chatelet, Paris",
+      "postalCode": "75001",
+      "countryCode": "FR",
+      "latitude": 48.8584,
+      "longitude": 2.3470
+    },
+    {
+      "id": "chain-dishoom-shoreditch",
+      "sourceKey": "src_osm",
+      "name": "Dishoom Shoreditch",
+      "normalizedName": "dishoom shoreditch",
+      "address": "7 Boundary St, London",
+      "postalCode": "E2 7JE",
+      "countryCode": "GB",
+      "latitude": 51.5245,
+      "longitude": -0.0772
+    }
+  ],
+  "labeledPairs": [
+    {
+      "idA": "venue-cg-01",
+      "idB": "venue-cg-02",
+      "isMatch": true,
+      "reason": "Exact match across sources with punctuation variation"
+    },
+    {
+      "idA": "venue-bound-01",
+      "idB": "venue-bound-02",
+      "isMatch": true,
+      "reason": "Boundary test: 22m apart, straddles latCell 5150 and 5151"
+    },
+    {
+      "idA": "venue-typo-01",
+      "idB": "venue-typo-02",
+      "isMatch": true,
+      "reason": "Typo test: Wagamama vs Wagamamma, distance ~20m"
+    },
+    {
+      "idA": "venue-artisan-01",
+      "idB": "venue-artisan-02",
+      "isMatch": true,
+      "reason": "Legal entity suffix variance: St John Bakery vs St John Bakery Ltd"
+    },
+    {
+      "idA": "venue-phonetic-01",
+      "idB": "venue-phonetic-02",
+      "isMatch": true,
+      "reason": "Apostrophe variance: L'Osteria Soho vs Losteria Soho"
+    },
+    {
+      "idA": "chain-pret-01",
+      "idB": "chain-pret-02",
+      "isMatch": false,
+      "reason": "Hard negative: multi-branch chain venues ~3.5km apart"
+    },
+    {
+      "idA": "venue-cg-01",
+      "idB": "chain-dishoom-shoreditch",
+      "isMatch": false,
+      "reason": "Hard negative: different branches of Dishoom ~3.8km apart"
+    },
+    {
+      "idA": "close-diff-01",
+      "idB": "close-diff-02",
+      "isMatch": false,
+      "reason": "Close proximity negative: adjacent buildings, completely different names"
+    },
+    {
+      "idA": "country-diff-01",
+      "idB": "country-diff-02",
+      "isMatch": false,
+      "reason": "Country mismatch negative: London GB vs Paris FR"
+    }
+  ]
+}

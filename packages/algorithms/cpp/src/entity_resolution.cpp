@@ -107,7 +107,7 @@ static std::vector<std::string> split_tokens(const std::string& s) {
                 token.clear();
             }
         } else {
-            token += std::tolower(static_cast<unsigned char>(c));
+            token += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         }
     }
     if (!token.empty()) tokens.push_back(token);
@@ -195,6 +195,55 @@ PairScoreResult EntityResolutionEngine::score_pair(const EntityRecord& a, const 
     };
 }
 
+static void emit_pairs_with_subblocking(
+    const std::vector<size_t>& indices,
+    const std::vector<EntityRecord>& records,
+    std::unordered_set<uint64_t>& candidate_pairs,
+    bool subblock_by_name
+) {
+    if (indices.size() <= 1) return;
+
+    auto add_pair = [&](size_t i, size_t j) {
+        size_t idx1 = std::min(i, j);
+        size_t idx2 = std::max(i, j);
+        uint64_t key = (static_cast<uint64_t>(idx1) << 32) | static_cast<uint64_t>(idx2);
+        candidate_pairs.insert(key);
+    };
+
+    if (indices.size() < 100) {
+        for (size_t a = 0; a < indices.size(); ++a) {
+            for (size_t b = a + 1; b < indices.size(); ++b) {
+                add_pair(indices[a], indices[b]);
+            }
+        }
+    } else {
+        // Sub-block large blocks to preserve recall without quadratic explosion
+        std::unordered_map<std::string, std::vector<size_t>> sub_blocks;
+        for (size_t idx : indices) {
+            const auto& r = records[idx];
+            std::string sub_key;
+            if (subblock_by_name) {
+                sub_key = (r.normalized_name.length() >= 2) ? r.normalized_name.substr(0, 2) : "__";
+            } else {
+                int lat_c = static_cast<int>(std::round(r.latitude * 100.0));
+                int lon_c = static_cast<int>(std::round(r.longitude * 100.0));
+                sub_key = std::to_string(lat_c) + "_" + std::to_string(lon_c);
+            }
+            sub_blocks[sub_key].push_back(idx);
+        }
+
+        for (const auto& [_, sub_list] : sub_blocks) {
+            if (sub_list.size() > 1) {
+                for (size_t a = 0; a < sub_list.size(); ++a) {
+                    for (size_t b = a + 1; b < sub_list.size(); ++b) {
+                        add_pair(sub_list[a], sub_list[b]);
+                    }
+                }
+            }
+        }
+    }
+}
+
 std::vector<std::pair<size_t, size_t>> EntityResolutionEngine::generate_blocked_pairs(
     const std::vector<EntityRecord>& records
 ) {
@@ -218,23 +267,79 @@ std::vector<std::pair<size_t, size_t>> EntityResolutionEngine::generate_blocked_
     }
 
     std::unordered_set<uint64_t> candidate_pairs;
-    auto add_pairs = [&](const std::unordered_map<std::string, std::vector<size_t>>& blocks) {
-        for (const auto& [_, indices] : blocks) {
-            if (indices.size() > 1 && indices.size() < 100) {
-                for (size_t a = 0; a < indices.size(); ++a) {
-                    for (size_t b = a + 1; b < indices.size(); ++b) {
-                        size_t idx1 = std::min(indices[a], indices[b]);
-                        size_t idx2 = std::max(indices[a], indices[b]);
-                        uint64_t key = (static_cast<uint64_t>(idx1) << 32) | static_cast<uint64_t>(idx2);
-                        candidate_pairs.insert(key);
+
+    auto add_pair = [&](size_t i, size_t j) {
+        size_t idx1 = std::min(i, j);
+        size_t idx2 = std::max(i, j);
+        uint64_t key = (static_cast<uint64_t>(idx1) << 32) | static_cast<uint64_t>(idx2);
+        candidate_pairs.insert(key);
+    };
+
+    // 1. Spatial blocking with Moore neighborhood (forward neighbor cells)
+    const std::vector<std::pair<int, int>> forward_neighbors = {
+        {0, 1},
+        {1, -1},
+        {1, 0},
+        {1, 1}
+    };
+
+    for (const auto& [geo_key, indices] : spatial_blocks) {
+        // Intra-cell pairs
+        emit_pairs_with_subblocking(indices, records, candidate_pairs, true);
+
+        // Cross-cell pairs with forward neighbor cells for boundary recall
+        size_t first_us = geo_key.find('_');
+        size_t second_us = geo_key.find('_', first_us + 1);
+        if (first_us == std::string::npos || second_us == std::string::npos) continue;
+
+        std::string country_code = geo_key.substr(0, first_us);
+        int lat_cell = std::stoi(geo_key.substr(first_us + 1, second_us - first_us - 1));
+        int lon_cell = std::stoi(geo_key.substr(second_us + 1));
+
+        for (const auto& [d_lat, d_lon] : forward_neighbors) {
+            std::string neighbor_key = country_code + "_" +
+                                      std::to_string(lat_cell + d_lat) + "_" +
+                                      std::to_string(lon_cell + d_lon);
+
+            auto it = spatial_blocks.find(neighbor_key);
+            if (it == spatial_blocks.end() || it->second.empty()) continue;
+
+            const auto& neighbor_indices = it->second;
+            bool both_small = (indices.size() < 100 && neighbor_indices.size() < 100);
+
+            if (both_small) {
+                for (size_t i : indices) {
+                    for (size_t j : neighbor_indices) {
+                        add_pair(i, j);
+                    }
+                }
+            } else {
+                // Secondary attribute sub-block across large adjacent blocks
+                std::unordered_map<std::string, std::vector<size_t>> neighbor_sub;
+                for (size_t j : neighbor_indices) {
+                    const auto& rB = records[j];
+                    std::string pfx = (rB.normalized_name.length() >= 2) ? rB.normalized_name.substr(0, 2) : "__";
+                    neighbor_sub[pfx].push_back(j);
+                }
+
+                for (size_t i : indices) {
+                    const auto& rA = records[i];
+                    std::string pfx = (rA.normalized_name.length() >= 2) ? rA.normalized_name.substr(0, 2) : "__";
+                    auto sub_it = neighbor_sub.find(pfx);
+                    if (sub_it != neighbor_sub.end()) {
+                        for (size_t j : sub_it->second) {
+                            add_pair(i, j);
+                        }
                     }
                 }
             }
         }
-    };
+    }
 
-    add_pairs(spatial_blocks);
-    add_pairs(name_blocks);
+    // 2. Name prefix blocking
+    for (const auto& [_, indices] : name_blocks) {
+        emit_pairs_with_subblocking(indices, records, candidate_pairs, false);
+    }
 
     std::vector<std::pair<size_t, size_t>> result;
     result.reserve(candidate_pairs.size());
@@ -250,7 +355,7 @@ std::vector<std::pair<size_t, size_t>> EntityResolutionEngine::generate_blocked_
 BenchmarkMetrics EntityResolutionEngine::evaluate_pairs(
     const std::vector<EntityRecord>& records,
     const std::unordered_set<std::string>& ground_truth_matches,
-    const std::unordered_set<std::string>& known_hard_negatives,
+    const std::unordered_set<std::string>& /*known_hard_negatives*/,
     double auto_merge_threshold
 ) {
     auto start = std::chrono::high_resolution_clock::now();
@@ -261,10 +366,17 @@ BenchmarkMetrics EntityResolutionEngine::evaluate_pairs(
     auto candidate_pairs = generate_blocked_pairs(records);
     size_t blocked_candidates = candidate_pairs.size();
 
-    size_t tp = 0;
-    size_t fp = 0;
-    size_t fn = 0;
-    size_t tn = 0;
+    // Canonicalize ground truth matches into min_id <-> max_id format
+    std::unordered_set<std::string> canonical_truth;
+    for (const auto& pair_str : ground_truth_matches) {
+        size_t delim = pair_str.find("<->");
+        if (delim != std::string::npos) {
+            std::string id_a = pair_str.substr(0, delim);
+            std::string id_b = pair_str.substr(delim + 3);
+            std::string canonical = (id_a < id_b) ? (id_a + "<->" + id_b) : (id_b + "<->" + id_a);
+            canonical_truth.insert(canonical);
+        }
+    }
 
     std::unordered_set<std::string> predicted_matches;
 
@@ -272,38 +384,35 @@ BenchmarkMetrics EntityResolutionEngine::evaluate_pairs(
         const auto& a = records[i];
         const auto& b = records[j];
 
-        std::string pair_key1 = a.id + "<->" + b.id;
-        std::string pair_key2 = b.id + "<->" + a.id;
-
-        bool is_true_match = (ground_truth_matches.count(pair_key1) > 0 || ground_truth_matches.count(pair_key2) > 0);
-        bool is_hard_neg = (known_hard_negatives.count(pair_key1) > 0 || known_hard_negatives.count(pair_key2) > 0);
-
         auto score_result = score_pair(a, b);
-
         bool predicted = (score_result.composite_score >= auto_merge_threshold && !score_result.is_hard_negative);
 
         if (predicted) {
-            predicted_matches.insert(pair_key1);
-            if (is_true_match) {
-                tp++;
-            } else {
-                fp++;
-            }
-        } else {
-            if (is_true_match) {
-                fn++;
-            } else {
-                tn++;
-            }
+            std::string canonical = (a.id < b.id) ? (a.id + "<->" + b.id) : (b.id + "<->" + a.id);
+            predicted_matches.insert(canonical);
         }
     }
 
-    // Check false negatives missed by blocking
-    for (const auto& true_pair : ground_truth_matches) {
-        if (predicted_matches.count(true_pair) == 0) {
+    size_t tp = 0;
+    size_t fn = 0;
+    for (const auto& true_pair : canonical_truth) {
+        if (predicted_matches.find(true_pair) != predicted_matches.end()) {
+            tp++;
+        } else {
             fn++;
         }
     }
+
+    size_t fp = 0;
+    for (const auto& pred_pair : predicted_matches) {
+        if (canonical_truth.find(pred_pair) == canonical_truth.end()) {
+            fp++;
+        }
+    }
+
+    size_t total_non_matches = (total_possible_pairs > canonical_truth.size()) ?
+                               (total_possible_pairs - canonical_truth.size()) : 0;
+    size_t tn = (total_non_matches > fp) ? (total_non_matches - fp) : 0;
 
     auto end = std::chrono::high_resolution_clock::now();
     double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
@@ -311,7 +420,7 @@ BenchmarkMetrics EntityResolutionEngine::evaluate_pairs(
     double precision = (tp + fp) > 0 ? static_cast<double>(tp) / (tp + fp) : 1.0;
     double recall = (tp + fn) > 0 ? static_cast<double>(tp) / (tp + fn) : 1.0;
     double f1 = (precision + recall) > 0 ? 2.0 * (precision * recall) / (precision + recall) : 0.0;
-    double false_merge_rate = (fp + tn) > 0 ? static_cast<double>(fp) / (fp + tn) : 0.0;
+    double false_merge_rate = total_non_matches > 0 ? static_cast<double>(fp) / total_non_matches : 0.0;
     double reduction_ratio = total_possible_pairs > 0 ? 1.0 - (static_cast<double>(blocked_candidates) / total_possible_pairs) : 1.0;
     double throughput = (elapsed_ms > 0.0) ? (blocked_candidates / (elapsed_ms / 1000.0)) : 0.0;
 

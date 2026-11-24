@@ -34,6 +34,7 @@ fn main() {
             postal_code: "SW1H 0EX".to_string(),
             latitude: 51.4988,
             longitude: -0.1309,
+            observed_at: None,
         };
 
         let result = pipeline.process_record(record, AllowedPurpose::DiscoverySearch);

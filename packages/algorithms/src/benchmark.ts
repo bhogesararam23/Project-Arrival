@@ -1,7 +1,6 @@
 import {
   EntityRecord,
-  blockCandidates,
-  scoreEntityPair,
+  evaluatePairs,
   BenchmarkMetrics,
 } from './entity-resolution.js';
 
@@ -64,72 +63,7 @@ export function runBenchmark(): BenchmarkMetrics {
     }
   }
 
-  const start = performance.now();
-  const n = records.length;
-  const totalPossiblePairs = (n * (n - 1)) / 2;
-
-  const candidatePairs = blockCandidates(records);
-  const blockedCandidates = candidatePairs.length;
-
-  let tp = 0;
-  let fp = 0;
-  let fn = 0;
-  let tn = 0;
-
-  const predictedMatches = new Set<string>();
-  const autoMergeThreshold = 0.85;
-
-  for (const [i, j] of candidatePairs) {
-    const a = records[i]!;
-    const b = records[j]!;
-
-    const key1 = `${a.id}<->${b.id}`;
-    const key2 = `${b.id}<->${a.id}`;
-    const isTrue = trueMatches.has(key1) || trueMatches.has(key2);
-
-    const scoreResult = scoreEntityPair(a, b);
-    const predicted = scoreResult.compositeScore >= autoMergeThreshold && !scoreResult.isHardNegative;
-
-    if (predicted) {
-      predictedMatches.add(key1);
-      if (isTrue) tp++;
-      else fp++;
-    } else {
-      if (isTrue) fn++;
-      else tn++;
-    }
-  }
-
-  for (const truePair of trueMatches) {
-    if (!predictedMatches.has(truePair)) {
-      fn++;
-    }
-  }
-
-  const elapsedMs = performance.now() - start;
-
-  const precision = tp + fp > 0 ? tp / (tp + fp) : 1.0;
-  const recall = tp + fn > 0 ? tp / (tp + fn) : 1.0;
-  const f1Score = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0.0;
-  const falseMergeRate = fp + tn > 0 ? fp / (fp + tn) : 0.0;
-  const blockingReductionRatio = totalPossiblePairs > 0 ? 1.0 - blockedCandidates / totalPossiblePairs : 1.0;
-  const throughputPairsPerSec = elapsedMs > 0 ? blockedCandidates / (elapsedMs / 1000) : 0;
-
-  return {
-    totalPossiblePairs,
-    candidatePairsBlocked: blockedCandidates,
-    truePositives: tp,
-    falsePositives: fp,
-    falseNegatives: fn,
-    trueNegatives: tn,
-    precision,
-    recall,
-    f1Score,
-    falseMergeRate,
-    blockingReductionRatio,
-    elapsedMs,
-    throughputPairsPerSec,
-  };
+  return evaluatePairs(records, trueMatches, hardNegatives, 0.85);
 }
 
 console.log('================================================================');

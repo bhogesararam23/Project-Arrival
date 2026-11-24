@@ -14,6 +14,8 @@ pub struct RawSourceRecord {
     pub postal_code: String,
     pub latitude: f64,
     pub longitude: f64,
+    #[serde(default)]
+    pub observed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -28,6 +30,8 @@ pub struct NormalizedIngestionRecord {
     pub longitude: f64,
     pub payload_digest_hex: String,
     pub ingested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -35,6 +39,8 @@ pub enum IngestionError {
     UnregisteredSource(String),
     SourceInactive(String),
     PurposeNotAllowed,
+    RetentionPeriodExceeded,
+    InvalidTimestamp,
     InvalidCoordinates,
     InvalidCountryCode,
 }
@@ -72,7 +78,22 @@ impl IngestionPipeline {
             return Err(IngestionError::PurposeNotAllowed);
         }
 
-        // 2. Coordinate sanity check
+        // 2. Retention Policy Check
+        if let Some(ref ts_str) = record.observed_at {
+            match chrono::DateTime::parse_from_rfc3339(ts_str) {
+                Ok(dt) => {
+                    let now = Utc::now();
+                    let age = now.signed_duration_since(dt.with_timezone(&Utc));
+                    let age_days = age.num_days();
+                    if age_days > 0 && (age_days as u32) > source.max_retention_days {
+                        return Err(IngestionError::RetentionPeriodExceeded);
+                    }
+                }
+                Err(_) => return Err(IngestionError::InvalidTimestamp),
+            }
+        }
+
+        // 3. Coordinate sanity check
         if !(-90.0..=90.0).contains(&record.latitude)
             || !(-180.0..=180.0).contains(&record.longitude)
         {
@@ -113,6 +134,7 @@ impl IngestionPipeline {
             longitude: record.longitude,
             payload_digest_hex,
             ingested_at: Utc::now().to_rfc3339(),
+            observed_at: record.observed_at,
         })
     }
 }
