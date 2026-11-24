@@ -28,7 +28,10 @@ jobs:
           version: 10.29.3
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile=false
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages and applications
+        run: pnpm build
 
       - name: Typecheck
         run: pnpm typecheck
@@ -36,8 +39,11 @@ jobs:
       - name: Run test suite
         run: pnpm test
 
-      - name: Build packages and applications
-        run: pnpm build
+      - name: Lint and static analysis
+        run: pnpm lint
+
+      - name: Validate database migrations
+        run: pnpm db:validate
 
   rust-checks:
     name: Rust Ingestion Engine Checks
@@ -76,7 +82,7 @@ jobs:
         run: |
           mkdir -p packages/algorithms/cpp/build
           cd packages/algorithms/cpp/build
-          cmake .. -DCMAKE_CXX_COMPILER=clang++
+          cmake .. -DCMAKE_CXX_COMPILER=clang++ -DENABLE_SANITIZERS=ON
           make -j$(nproc)
 
       - name: Run C++ algorithm tests & benchmarks
