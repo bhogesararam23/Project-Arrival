@@ -1,0 +1,85 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, feat/*, chore/*, fix/*]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  typescript-checks:
+    name: TypeScript Build, Lint & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run test suite
+        run: pnpm test
+
+      - name: Build packages and applications
+        run: pnpm build
+
+  rust-checks:
+    name: Rust Ingestion Engine Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path packages/ingestion/rust/Cargo.toml -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --manifest-path packages/ingestion/rust/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path packages/ingestion/rust/Cargo.toml
+
+  cpp-checks:
+    name: C++ Algorithm Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install CMake & Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake
+
+      - name: Build C++ entity resolution engine
+        run: |
+          mkdir -p packages/algorithms/cpp/build
+          cd packages/algorithms/cpp/build
+          cmake .. -DCMAKE_CXX_COMPILER=clang++
+          make -j$(nproc)
+
+      - name: Run C++ algorithm tests & benchmarks
+        run: |
+          ./packages/algorithms/cpp/build/arrival_entity_resolution_test
+          ./packages/algorithms/cpp/build/arrival_entity_resolution_bench
