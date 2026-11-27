@@ -260,8 +260,116 @@ paths:
         '409':
           $ref: '#/components/responses/Problem'
 
+  /v1/webhooks/{providerKey}:
+    post:
+      summary: Receive signed provider webhook event (deduplicated via webhook_inbox)
+      parameters:
+        - name: providerKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-Arrival-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Arrival-Timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventId, eventType]
+              properties:
+                eventId:
+                  type: string
+                eventType:
+                  type: string
+                accountRef:
+                  type: string
+                orderId:
+                  type: string
+      responses:
+        '200':
+          description: Webhook verified and processed or deduplicated.
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+
+  /v1/ops/overview:
+    get:
+      summary: Operational control plane overview metrics (ops_readonly or ops_admin)
+      security:
+        - OperatorBearer: []
+      responses:
+        '200':
+          description: Current operational counts from persistence.
+        '401':
+          $ref: '#/components/responses/Problem'
+
+  /v1/ops/orders/{orderId}:
+    get:
+      summary: Investigate order, payment, fulfilment, events, and audit trail (PII masked)
+      security:
+        - OperatorBearer: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order investigation view.
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+
+  /v1/ops/capabilities/{capabilityId}/suspend:
+    post:
+      summary: Suspend a provider capability (ops_admin required; audited)
+      security:
+        - OperatorBearer: []
+      parameters:
+        - name: capabilityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 5
+      responses:
+        '200':
+          description: Capability suspended.
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+
 components:
   securitySchemes:
+    OperatorBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: operator-token
     GuestOrCustomer:
       type: http
       scheme: bearer

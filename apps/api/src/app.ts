@@ -186,6 +186,17 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
   );
   const operatorVerifier = opts?.operatorVerifier || new StaticMapOperatorVerifier([]);
 
+  // Security headers
+  app.addHook('onSend', async (request, reply, payload) => {
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('Referrer-Policy', 'no-referrer');
+    if (request.url.startsWith('/v1/orders') || request.url.startsWith('/v1/ops')) {
+      reply.header('Cache-Control', 'no-store');
+    }
+    return payload;
+  });
+
   // Set RFC 9457 Error Handler
   app.setErrorHandler(errorHandler);
 
