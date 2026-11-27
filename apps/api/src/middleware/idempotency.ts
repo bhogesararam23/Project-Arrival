@@ -3,6 +3,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArrivalError, hashGuestSecret } from '@arrival/contracts';
 import type { IIdempotencyRepository } from '../repositories/interfaces.js';
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    idempotencyRecordId?: string;
+  }
+}
+
 const LOCK_DURATION_MS = 30_000; // 30s lock duration
 
 function resolvePrincipalScope(request: FastifyRequest): string {
@@ -63,6 +69,10 @@ export function createIdempotencyMiddleware(idempotencyRepo: IIdempotencyReposit
       return reply
         .status(reservation.record.responseStatus || 200)
         .send(reservation.record.responseBody);
+    }
+
+    if (reservation.record?.id) {
+      request.idempotencyRecordId = reservation.record.id;
     }
   };
 }

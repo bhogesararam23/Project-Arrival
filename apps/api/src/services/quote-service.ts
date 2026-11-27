@@ -6,6 +6,8 @@ import {
   isCapabilityActive,
   type QuoteRequest,
   type Quote,
+  type QuoteLineSnapshot,
+  type ModifierSelectionSnapshot,
 } from '@arrival/contracts';
 import type {
   IPlacesRepository,
@@ -37,7 +39,6 @@ export class QuoteService {
     // 2. Strict Cross-Border Gate
     const destinationCountry = parseCountryCode(request.destination.countryCode);
     if (destinationCountry !== location.countryCode) {
-      // Check if explicit cross-border capability is approved
       const crossBorderCap = await this.capabilityRepo.getCapability(
         'platform_cross_border',
         'cross_border_ordering',
@@ -67,14 +68,7 @@ export class QuoteService {
     // 4. Calculate subtotal in minor units and validate modifiers
     const itemMap = new Map(catalogue.items.map((i) => [i.id, i]));
     let subtotal = Money.zero(catalogue.currency);
-    const enrichedItems: Array<{
-      menuItemId: string;
-      name: string;
-      quantity: number;
-      unitPriceMinor: string;
-      totalPriceMinor: string;
-      modifierOptionIds?: string[];
-    }> = [];
+    const enrichedItems: QuoteLineSnapshot[] = [];
 
     for (const line of request.items) {
       const item = itemMap.get(line.menuItemId);
@@ -91,8 +85,8 @@ export class QuoteService {
       let unitPrice = Money.fromJson(item.price);
       const selectedModIds = new Set(line.modifierOptionIds || []);
       const claimedModIds = new Set<string>();
+      const modifierSnapshots: ModifierSelectionSnapshot[] = [];
 
-      // Validate modifier groups for this item
       for (const group of item.modifierGroups || []) {
         const optionMap = new Map(group.options.map((o) => [o.id, o]));
         let selectionsInGroup = 0;
@@ -108,6 +102,11 @@ export class QuoteService {
             selectionsInGroup++;
             claimedModIds.add(optId);
             unitPrice = unitPrice.add(Money.fromJson(opt.priceDelta));
+            modifierSnapshots.push({
+              optionId: opt.id,
+              optionName: opt.name,
+              priceDelta: opt.priceDelta,
+            });
           }
         }
 
@@ -123,7 +122,6 @@ export class QuoteService {
         }
       }
 
-      // Check for orphan modifier IDs not matching any group
       for (const optId of selectedModIds) {
         if (!claimedModIds.has(optId)) {
           throw ArrivalError.badRequest(
@@ -142,14 +140,11 @@ export class QuoteService {
         unitPriceMinor: unitPrice.amountMinor.toString(),
         totalPriceMinor: lineTotal.amountMinor.toString(),
         ...(line.modifierOptionIds ? { modifierOptionIds: line.modifierOptionIds } : {}),
+        ...(modifierSnapshots.length > 0 ? { modifiers: modifierSnapshots } : {}),
       });
     }
 
-    // 5. Calculate tax and fees via injectable pricing policy
-    const tax = this.pricingPolicy.calculateTax(subtotal, destinationCountry, catalogue.currency);
-    const serviceFee = this.pricingPolicy.calculateServiceFee(destinationCountry, catalogue.currency);
-
-    // 6. Request delivery quote from fulfilment provider
+    // 5. Request delivery quote from fulfilment provider
     const deliveryQuote = await this.fulfilmentAdapter.quoteDelivery({
       pickupCoordinates: location.coordinates,
       destinationCountry,
@@ -157,7 +152,20 @@ export class QuoteService {
       deliveryAddress: request.destination.address,
     });
 
-    const total = subtotal.add(tax).add(deliveryQuote.fee).add(serviceFee);
+    if (!deliveryQuote.serviceable) {
+      throw ArrivalError.unprocessableEntity(
+        `Destination is outside the serviceable delivery area for ${location.displayName}`,
+        'DELIVERY_UNSERVICEABLE'
+      );
+    }
+
+    // 6. Build auditable pricing breakdown via policy
+    const breakdown = this.pricingPolicy.buildBreakdown(
+      subtotal,
+      deliveryQuote.fee,
+      destinationCountry,
+      catalogue.currency
+    );
 
     const expiresAt = new Date(Date.now() + this.quoteTtlSeconds * 1000).toISOString();
     const quoteId = randomUUID();
@@ -165,12 +173,15 @@ export class QuoteService {
     const quote: Quote = {
       quoteId,
       currency: catalogue.currency,
-      subtotal: subtotal.toJson(),
-      tax: tax.toJson(),
-      delivery: deliveryQuote.fee.toJson(),
-      total: total.toJson(),
+      subtotal: breakdown.subtotal,
+      tax: breakdown.tax,
+      delivery: breakdown.deliveryFee,
+      serviceFee: breakdown.serviceFee,
+      total: breakdown.total,
       expiresAt,
       catalogueVersion: catalogue.version,
+      deliveryQuoteRef: deliveryQuote.quoteRef,
+      taxInclusive: breakdown.taxInclusive,
     };
 
     await this.quotesRepo.save(quote, {
@@ -178,6 +189,8 @@ export class QuoteService {
       destinationCountry,
       items: enrichedItems,
       guestSessionId,
+      deliveryAddressFormatted: request.destination.address.formattedAddress,
+      pricingBreakdown: breakdown,
     });
 
     return quote;
