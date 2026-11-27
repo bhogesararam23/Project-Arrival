@@ -191,6 +191,7 @@ export interface IWebhookInboxRepository {
   markProcessed(id: string): Promise<void>;
   markFailed(id: string, errorMessage: string): Promise<void>;
   listFailed(limit?: number): Promise<WebhookInboxMessage[]>;
+  claimPendingBatch(limit?: number): Promise<WebhookInboxMessage[]>;
 }
 
 export interface IAuditRepository {

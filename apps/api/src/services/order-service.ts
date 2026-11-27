@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  Money,
   ArrivalError,
   generateGuestSecret,
   hashGuestSecret,
@@ -24,16 +23,14 @@ import type {
   IFulfilmentRepository,
   IAuditRepository,
 } from '../repositories/interfaces.js';
-import {
-  ProviderTimeoutError,
-  type IMerchantPosAdapter,
-  type IPaymentAdapter,
-} from '../adapters/provider-adapters.js';
+import type { IMerchantPosAdapter, IPaymentAdapter } from '../adapters/provider-adapters.js';
 import { parseBearerToken, validateHexToken } from '../middleware/auth.js';
 import { PaymentOrchestrationService } from './payment-service.js';
+import { OrderOrchestrator } from './order-orchestrator.js';
 
 export class OrderService {
   private readonly paymentService?: PaymentOrchestrationService;
+  private readonly orchestrator: OrderOrchestrator;
 
   constructor(
     private readonly quotesRepo: IQuotesRepository,
@@ -44,13 +41,25 @@ export class OrderService {
     private readonly posAdapter: IMerchantPosAdapter,
     private readonly paymentAdapter: IPaymentAdapter,
     private readonly outboxRepo?: IOutboxRepository,
-    paymentRepo?: IPaymentRepository,
+    private readonly paymentRepo?: IPaymentRepository,
     private readonly fulfilmentRepo?: IFulfilmentRepository,
-    private readonly auditRepo?: IAuditRepository
+    auditRepo?: IAuditRepository
   ) {
     if (paymentRepo) {
       this.paymentService = new PaymentOrchestrationService(paymentRepo, paymentAdapter, auditRepo);
     }
+    this.orchestrator = new OrderOrchestrator(
+      orderRepo,
+      posAdapter,
+      paymentAdapter,
+      outboxRepo,
+      paymentRepo,
+      auditRepo
+    );
+  }
+
+  getOrchestrator(): OrderOrchestrator {
+    return this.orchestrator;
   }
 
   async submitOrder(
@@ -60,6 +69,7 @@ export class OrderService {
       idempotencyRecordId?: string;
       guestSessionId?: string;
       customerId?: string;
+      asyncOnly?: boolean;
     }
   ): Promise<OrderCreated> {
     // 1. Fetch & validate quote
@@ -116,7 +126,6 @@ export class OrderService {
 
     // 3. Build immutable purchase snapshot & guest grants BEFORE committing order
     const orderId = randomUUID();
-    const orderTotal = Money.fromJson(quote.total);
     const nowIso = new Date(now).toISOString();
 
     const purchaseSnapshot: PurchaseSnapshot = {
@@ -184,7 +193,6 @@ export class OrderService {
     const outboxMsgId = randomUUID();
 
     // 4. Atomically consume quote, persist order + snapshot + items + grants + outbox in ONE DB transaction
-    //    (No external network calls inside the DB transaction!)
     const { quoteConsumed } = await this.orderRepo.createOrder({
       order: orderCreated,
       quote,
@@ -201,7 +209,12 @@ export class OrderService {
           aggregateType: 'order',
           aggregateId: orderId,
           eventType: 'order_submitted',
-          payload: { orderId, locationId, total: quote.total },
+          payload: {
+            orderId,
+            locationId,
+            total: quote.total,
+            idempotencyKey: options.idempotencyKey,
+          },
           createdAt: nowIso,
           availableAt: nowIso,
           attempts: 0,
@@ -211,6 +224,21 @@ export class OrderService {
 
     if (!quoteConsumed) {
       throw ArrivalError.conflict(`Quote ${request.quoteId} has already been consumed or expired`);
+    }
+
+    if (this.paymentRepo) {
+      await this.paymentRepo.createAttempt({
+        id: randomUUID(),
+        orderId,
+        providerKey: this.paymentAdapter.providerKey,
+        providerAccountRef: 'default',
+        state: 'requires_action',
+        amountMinor: quote.total.amountMinor,
+        currency: quote.currency,
+        idempotencyKey: `pay-${options.idempotencyKey}`,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
     }
 
     if (this.fulfilmentRepo) {
@@ -229,184 +257,44 @@ export class OrderService {
       });
     }
 
-    // 5. Execute payment authorization outside DB transaction
-    let paymentState: OrderCreated['paymentState'] = 'authorized';
-    let providerPaymentRef: string | undefined;
-
-    if (this.paymentService) {
-      const payOutcome = await this.paymentService.createAndAuthorize({
-        orderId,
-        amount: orderTotal,
-        currency: quote.currency,
-        paymentMethodToken: request.paymentMethodToken,
-        idempotencyKey: `pay-${options.idempotencyKey}`,
-      });
-
-      if (payOutcome.outcome === 'failed') {
-        await this.orderRepo.updateState(orderId, 'failed', 'submitted');
-        await this.orderRepo.recordEvent(orderId, {
-          eventType: 'payment_declined',
-          occurredAt: new Date().toISOString(),
-          source: 'payment',
-          message: 'Payment authorization was declined by issuer',
-          fromState: 'submitted',
-          toState: 'failed',
-        });
-        throw ArrivalError.unprocessableEntity('Payment authorization was declined by issuer', 'PAYMENT_DECLINED');
-      }
-
-      if (payOutcome.outcome === 'reconciliation_required') {
-        await this.orderRepo.recordEvent(orderId, {
-          eventType: 'payment_reconciliation_required',
-          occurredAt: new Date().toISOString(),
-          source: 'payment',
-          message: 'Payment authorization outcome uncertain due to provider timeout; queued for reconciliation',
-          toState: 'submitted',
-        });
-        return {
-          ...orderCreated,
-          paymentState: 'reconciliation_required',
-          updatedAt: new Date().toISOString(),
-        };
-      }
-
-      paymentState = payOutcome.outcome === 'captured' ? 'captured' : 'authorized';
-      providerPaymentRef = payOutcome.attempt.providerPaymentRef || undefined;
-    } else {
-      const paymentResult = await this.paymentAdapter.collectPayment({
-        paymentMethodToken: request.paymentMethodToken,
-        amount: orderTotal,
-        orderId,
-        idempotencyKey: options.idempotencyKey,
-      });
-      if (paymentResult.status === 'failed') {
-        await this.orderRepo.updateState(orderId, 'failed', 'submitted');
-        throw ArrivalError.unprocessableEntity('Payment authorization was declined by issuer', 'PAYMENT_DECLINED');
-      }
-      paymentState = paymentResult.status === 'captured' ? 'captured' : 'authorized';
-      providerPaymentRef = paymentResult.providerRef;
+    if (options.asyncOnly) {
+      return orderCreated;
     }
 
-    // 6. Forward to POS with authoritative quoted line prices
-    const posItems = (quoteRecord.items || []).map((i) => ({
-      name: i.name || i.menuItemId,
-      quantity: i.quantity,
-      priceMinor: i.unitPriceMinor ? BigInt(i.unitPriceMinor) : 0n,
-    }));
+    // Execute recoverable orchestration step; claim outbox message if available so worker won't duplicate
+    const orchestrated = await this.orchestrator.processSubmittedOrder({
+      orderId,
+      paymentMethodToken: request.paymentMethodToken,
+      idempotencyKey: options.idempotencyKey,
+      throwOnBusinessDecline: true,
+    });
 
-    try {
-      const posResult = await this.posAdapter.submitOrder({
-        merchantLocationId: locationId,
-        orderId,
-        items: posItems,
-        currency: quote.currency,
-        idempotencyKey: `pos-${options.idempotencyKey}`,
-      });
-
-      if (posResult.status === 'rejected') {
-        await this.orderRepo.updateState(orderId, 'rejected', 'submitted');
-        await this.orderRepo.updateMerchantOrderState(orderId, 'merchant_rejected', posResult.providerRef);
-        await this.orderRepo.recordEvent(orderId, {
-          eventType: 'order_merchant_rejected',
-          occurredAt: new Date().toISOString(),
-          source: 'merchant',
-          message: 'Merchant POS declined the order submission',
-          fromState: 'submitted',
-          toState: 'rejected',
-        });
-
-        // Recoverable compensation
-        if (this.paymentService) {
-          await this.paymentService.refundOrVoid({
-            orderId,
-            reason: 'POS_REJECTION',
-            idempotencyKey: `${options.idempotencyKey}-pos-rejection-refund`,
-          });
-        } else {
-          await this.paymentAdapter.refundPayment(
-            providerPaymentRef || orderId,
-            orderTotal,
-            `${options.idempotencyKey}-pos-rejection-refund`
+    if (this.outboxRepo) {
+      const claimed = await this.outboxRepo.claimBatch('api-inline', 20, 30_000);
+      for (const msg of claimed) {
+        if (msg.id === outboxMsgId && msg.leaseToken) {
+          await this.outboxRepo.complete(msg.id, msg.leaseToken);
+        } else if (msg.leaseToken) {
+          await this.outboxRepo.scheduleRetry(
+            msg.id,
+            msg.leaseToken,
+            new Date().toISOString(),
+            'Deferred to background worker'
           );
         }
-
-        if (this.outboxRepo) {
-          await this.outboxRepo.publish({
-            id: randomUUID(),
-            aggregateType: 'order',
-            aggregateId: orderId,
-            eventType: 'order_compensation_refunded',
-            payload: {
-              orderId,
-              reason: 'POS_REJECTION',
-              amount: quote.total,
-            },
-            createdAt: new Date().toISOString(),
-            availableAt: new Date().toISOString(),
-            attempts: 0,
-          });
-        }
-
-        throw ArrivalError.unprocessableEntity(
-          'Merchant POS declined the order submission',
-          'MERCHANT_REJECTED'
-        );
       }
-
-      // POS accepted for processing (NOT yet merchant_accepted!)
-      await this.orderRepo.updateState(orderId, 'awaiting_merchant', 'submitted');
-      await this.orderRepo.updateMerchantOrderState(orderId, 'submission_accepted_for_processing', posResult.providerRef);
-      await this.orderRepo.recordEvent(orderId, {
-        eventType: 'order_awaiting_merchant',
-        occurredAt: new Date().toISOString(),
-        source: 'arrival_api',
-        message: 'Order transmitted to merchant POS; awaiting merchant acceptance',
-        fromState: 'submitted',
-        toState: 'awaiting_merchant',
-      });
-
-      return {
-        ...orderCreated,
-        orderState: 'awaiting_merchant',
-        paymentState,
-        merchantOrderState: 'submission_accepted_for_processing',
-        updatedAt: new Date().toISOString(),
-      };
-    } catch (err) {
-      if (err instanceof ProviderTimeoutError) {
-        await this.orderRepo.updateMerchantOrderState(orderId, 'submission_timeout');
-        await this.orderRepo.recordEvent(orderId, {
-          eventType: 'pos_submission_timeout',
-          occurredAt: new Date().toISOString(),
-          source: 'merchant',
-          message: 'Merchant POS request timed out; reconciliation required',
-          toState: 'submitted',
-        });
-
-        if (this.auditRepo) {
-          await this.auditRepo.createCompensation({
-            id: randomUUID(),
-            orderId,
-            operationType: 'manual_reconciliation',
-            state: 'reconciliation_required',
-            idempotencyKey: `${options.idempotencyKey}-pos-timeout`,
-            attempts: 1,
-            lastError: err.message,
-            reason: 'POS submission timed out; uncertain whether merchant received order',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        }
-
-        return {
-          ...orderCreated,
-          paymentState,
-          merchantOrderState: 'submission_timeout',
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      throw err;
     }
+
+    return {
+      ...orderCreated,
+      orderState: orchestrated.orderState,
+      paymentState: orchestrated.paymentState,
+      fulfilmentState: orchestrated.fulfilmentState,
+      ...(orchestrated.merchantOrderState !== undefined
+        ? { merchantOrderState: orchestrated.merchantOrderState }
+        : {}),
+      updatedAt: orchestrated.updatedAt,
+    };
   }
 
   async getOrder(orderId: string, authHeader?: string): Promise<OrderView> {

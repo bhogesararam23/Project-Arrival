@@ -1,26 +1,55 @@
-import { createDatabasePool, PgOutboxRepository } from '@arrival/database';
+import {
+  createDatabasePool,
+  checkDatabaseHealth,
+  PgOutboxRepository,
+  PgOrderRepository,
+  PgPaymentRepository,
+  PgAuditRepository,
+} from '@arrival/database';
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { logger } from './logger.js';
 import { OutboxWorker } from './workers/outbox-worker.js';
+import { OrderOrchestrator } from './services/order-orchestrator.js';
+import {
+  MockMerchantPosAdapter,
+  MockPaymentAdapter,
+} from './adapters/provider-adapters.js';
+import { HmacSha256TestWebhookVerifier } from './services/webhook-service.js';
+import { StaticMapOperatorVerifier } from './middleware/ops-auth.js';
 
 const config = loadConfig();
 const pool = config.databaseUrl
   ? createDatabasePool({ connectionString: config.databaseUrl })
   : undefined;
 
-const app = buildApp(pool ? { pgPool: pool } : undefined);
+const operatorVerifier = new StaticMapOperatorVerifier(config.operatorTokens);
+const webhookVerifier = new HmacSha256TestWebhookVerifier(config.webhookSecrets);
 
-const outboxWorker = pool
-  ? new OutboxWorker(new PgOutboxRepository(pool), {
-      order_submitted: async (msg) => {
-        logger.info('Processed outbox order_submitted event', { orderId: msg.aggregateId });
-      },
-      order_compensation_refunded: async (msg) => {
-        logger.info('Processed outbox compensation event', { orderId: msg.aggregateId });
-      },
-    })
-  : undefined;
+let outboxWorker: OutboxWorker | undefined;
+if (pool) {
+  const orchestrator = new OrderOrchestrator(
+    new PgOrderRepository(pool),
+    new MockMerchantPosAdapter(),
+    new MockPaymentAdapter(),
+    new PgOutboxRepository(pool),
+    new PgPaymentRepository(pool),
+    new PgAuditRepository(pool)
+  );
+  outboxWorker = new OutboxWorker(
+    new PgOutboxRepository(pool),
+    orchestrator.getOutboxHandlers()
+  );
+}
+
+const app = buildApp({
+  ...(pool ? { pgPool: pool } : {}),
+  operatorVerifier,
+  webhookVerifier,
+  operatorAuthConfigured: config.operatorTokens.length > 0,
+  webhookAuthConfigured: Object.keys(config.webhookSecrets).length > 0,
+  ...(outboxWorker ? { getWorkerHealth: () => outboxWorker!.getHealthMetrics() } : {}),
+});
 
 async function shutdown(signal: string) {
   logger.info(`Received ${signal}; shutting down gracefully...`);
@@ -45,9 +74,17 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 async function start() {
   try {
     if (pool) {
-      logger.info('Connected to PostgreSQL persistence layer');
+      const dbCheck = await checkDatabaseHealth(pool);
+      if (!dbCheck.healthy) {
+        throw new Error(`Database readiness probe failed on startup: ${dbCheck.error}`);
+      }
+      logger.info('Connected to PostgreSQL persistence layer', { latencyMs: dbCheck.latencyMs });
     } else {
       logger.warn('Running with in-memory persistence double (development/test mode only)');
+    }
+
+    if (config.operatorTokens.length === 0) {
+      logger.warn('Operator authentication is unconfigured (OPS_AUTH_TOKENS_JSON unset); /v1/ops/* will fail closed');
     }
 
     await app.listen({ port: config.port, host: config.host });

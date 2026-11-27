@@ -27,7 +27,7 @@ export class QuoteService {
     private readonly fulfilmentAdapter: IFulfilmentAdapter,
     private readonly pricingPolicy: IPricingPolicy = new DefaultPricingPolicy(),
     private readonly quoteTtlSeconds = 900
-  ) {}
+  ) { }
 
   async createQuote(request: QuoteRequest, guestSessionId?: string): Promise<Quote> {
     // 1. Verify location

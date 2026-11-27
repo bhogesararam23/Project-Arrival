@@ -77,15 +77,19 @@ const SENSITIVE_KEYS = new Set([
   'authorization',
 ]);
 
-export function redactWebhookPayload(payload: Record<string, unknown>): Record<string, unknown> {
+export function redactWebhookPayload(payload: unknown, depth = 0): unknown {
+  if (depth > 6 || payload === null || typeof payload !== 'object') {
+    return payload;
+  }
+  if (Array.isArray(payload)) {
+    return payload.map((item) => redactWebhookPayload(item, depth + 1));
+  }
   const redacted: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(payload)) {
+  for (const [key, val] of Object.entries(payload as Record<string, unknown>)) {
     if (SENSITIVE_KEYS.has(key.toLowerCase())) {
       redacted[key] = '[REDACTED]';
-    } else if (val && typeof val === 'object' && !Array.isArray(val)) {
-      redacted[key] = redactWebhookPayload(val as Record<string, unknown>);
     } else {
-      redacted[key] = val;
+      redacted[key] = redactWebhookPayload(val, depth + 1);
     }
   }
   return redacted;
@@ -169,6 +173,12 @@ export class WebhookService {
     // 4. Deduplicate atomically in webhook_inbox
     const { inserted, message } = await this.webhookRepo.ingest(inboxMessage);
     if (!inserted) {
+      if (message.payloadDigest && message.payloadDigest !== payloadDigest) {
+        throw ArrivalError.conflict(
+          'Duplicate webhook event ID received with mismatched payload digest',
+          'WEBHOOK_PAYLOAD_MISMATCH'
+        );
+      }
       return {
         inboxId: message.id,
         deduplicated: true,
@@ -192,6 +202,31 @@ export class WebhookService {
       );
       throw err;
     }
+  }
+
+  /**
+   * Recovers and processes verified webhook events left in 'pending' state after a process crash.
+   */
+  async recoverPendingEvents(limit = 20): Promise<{ claimed: number; processed: number; failed: number }> {
+    const pending = await this.webhookRepo.claimPendingBatch(limit);
+    let processed = 0;
+    let failed = 0;
+
+    for (const msg of pending) {
+      try {
+        await this.dispatchEvent(msg.eventType, msg.correlationOrderId || null, msg.providerEventRef);
+        await this.webhookRepo.markProcessed(msg.id);
+        processed += 1;
+      } catch (err) {
+        await this.webhookRepo.markFailed(
+          msg.id,
+          err instanceof Error ? err.message : String(err)
+        );
+        failed += 1;
+      }
+    }
+
+    return { claimed: pending.length, processed, failed };
   }
 
   private async dispatchEvent(
