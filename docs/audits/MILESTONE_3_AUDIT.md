@@ -11,24 +11,24 @@
 
 | Finding ID | Severity | Area | Status |
 |---|---|---|---|
-| AUD-001 | Critical | PostgreSQL Order Insertion & Foreign Keys | Open |
-| AUD-002 | Critical | PostgreSQL Order State & Event Reconstruction | Open |
-| AUD-003 | Critical | PostgreSQL Quote Persistence, Items & Atomic Consumption | Open |
-| AUD-004 | Critical | Order-to-Payment & Fulfilment State Persistence | Open |
-| AUD-005 | High | Order Submission Transaction Boundary & External Calls | Open |
-| AUD-006 | Critical | Outbox Atomic Claiming (`FOR UPDATE SKIP LOCKED`), Leases & DLQ | Open |
-| AUD-007 | Critical | Webhook Ingress, Signature Verification & Replay Protection | Open |
-| AUD-008 | Critical | Idempotency Concurrent Insert Race (`23505`) | Open |
-| AUD-009 | Critical | Hardcoded `orderability: 'native_orderable'` in `PgPlacesRepository` | Open |
-| AUD-010 | High | Mock Providers Marked `production_verified` in Fixtures | Open |
-| AUD-011 | High | Capability Governance Schema Gaps (Account, Merchant, Statuses) | Open |
-| AUD-012 | High | Migration Advisory Lock Pool Connection Mismatch & Silent Bypass | Open |
-| AUD-013 | Medium | Database Pool Timeouts, Graceful Shutdown & Readiness Check | Open |
-| AUD-014 | High | Missing Operations Control Plane & RBAC Enforcement | Open |
-| AUD-015 | Medium | Pricing Policy Currency Exponents & US/CA Tax Handling | Open |
-| AUD-016 | Medium | Frontend Cart, Quote, Checkout & Order Timeline Missing | Open |
-| AUD-017 | Medium | OpenAPI Spec Drift vs Implemented Routes | Open |
-| AUD-018 | High | Real PostgreSQL Integration Test Suite Missing | Open |
+| AUD-001 | Critical | PostgreSQL Order Insertion & Foreign Keys | Fixed |
+| AUD-002 | Critical | PostgreSQL Order State & Event Reconstruction | Fixed |
+| AUD-003 | Critical | PostgreSQL Quote Persistence, Items & Atomic Consumption | Fixed |
+| AUD-004 | Critical | Order-to-Payment & Fulfilment State Persistence | Fixed |
+| AUD-005 | High | Order Submission Transaction Boundary & External Calls | Fixed |
+| AUD-006 | Critical | Outbox Atomic Claiming (`FOR UPDATE SKIP LOCKED`), Leases & DLQ | Fixed |
+| AUD-007 | Critical | Webhook Ingress, Signature Verification & Replay Protection | Fixed |
+| AUD-008 | Critical | Idempotency Concurrent Insert Race (`23505`) | Fixed |
+| AUD-009 | Critical | Hardcoded `orderability: 'native_orderable'` in `PgPlacesRepository` | Fixed |
+| AUD-010 | High | Mock Providers Marked `production_verified` in Fixtures | Fixed |
+| AUD-011 | High | Capability Governance Schema Gaps (Account, Merchant, Statuses) | Fixed |
+| AUD-012 | High | Migration Advisory Lock Pool Connection Mismatch & Silent Bypass | Fixed |
+| AUD-013 | Medium | Database Pool Timeouts, Graceful Shutdown & Readiness Check | Fixed |
+| AUD-014 | High | Missing Operations Control Plane & RBAC Enforcement | Fixed |
+| AUD-015 | Medium | Pricing Policy Currency Exponents & US/CA Tax Handling | Fixed |
+| AUD-016 | Medium | Frontend Cart, Quote, Checkout & Order Timeline Missing | Fixed |
+| AUD-017 | Medium | OpenAPI Spec Drift vs Implemented Routes | Fixed |
+| AUD-018 | High | Real PostgreSQL Integration Test Suite Missing | Fixed (CI PG service; local Docker stopped) |
 
 ---
 

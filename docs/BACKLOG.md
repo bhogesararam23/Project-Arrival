@@ -66,3 +66,20 @@ Dependency direction: resolve market, legal and source rights before integration
 | B-019 | Live API discovery interface & states | **Implemented** | React web application (`@arrival/web`) integrated with backend API client (`/v1/places/search`, `/v1/catalogues/:locationId`), supporting debounced live search, loading spinner, empty states, error retry, modifier group rendering, and synthetic test environment disclaimers. |
 | B-020 | Entity resolution spatial boundary recall | **Implemented** | Spatial blocking expanded with 3x3 Moore neighborhood (forward neighbor cells) to recover venues straddling grid boundaries; large blocks sub-blocked by secondary attributes; mathematical metrics corrected (`TP + FP + FN + TN === totalPossiblePairs`); verified against shared golden fixture `golden_evaluation_pairs.json`. |
 | B-026 | High-throughput C++ entity resolution | **Implemented** | MSVC/Clang C++17 engine achieves ~298k pairs/sec with 100% precision, 100% recall on golden truth, 0.00% False Merge Rate, and clean MSVC warning-free build. |
+
+## Milestone 3 Implementation Status (Transaction Platform & Operations Completed 2026-11-27)
+
+Status discipline: `Implemented` = code & unit/contract tests complete; `Integration tested` = real PostgreSQL integration suite implemented and wired in CI (local Docker daemon unavailable); `Blocked` = gated on external commercial/provider credentials.
+
+| Backlog ID | Implemented Component | Status | Verification & Evidence |
+|---|---|---|---|
+| B-001 | Pilot market & seller-of-record dossier | **Blocked** | External commercial/legal decision required before live launch. |
+| B-004 | Session-pinned advisory lock & PG pool | **Implemented** | `DatabaseMigrator` pins a single `PoolClient` and fails closed when `requireLock: true`; `client.ts` enforces pool/statement timeouts and `/health/ready` checks `SELECT 1`. |
+| B-005 | Real PostgreSQL repositories & `004` schema | **Integration tested** (CI PG service) | `004_milestone3_core.sql` + real PG tests in `postgres.integration.test.ts` covering quotes, orders, items, payments, fulfilment, outbox, webhooks, and audit. |
+| B-008 | Fail-closed capability governance | **Implemented** | Default mock capabilities downgraded to `sandbox_verified`; `PgPlacesRepository` derives `orderability` from `provider_capabilities`; expired/revoked capabilities fail closed. |
+| B-009 | Independent order/payment/fulfilment machines | **Implemented** | Explicit transition tables (`canTransitionOrder`, `canTransitionPayment`, `canTransitionFulfilment`, `canTransitionMerchantOrder`), optimistic concurrency `version`, and `reconciliation_required` handling. |
+| B-010 | Durable outbox worker & webhook inbox | **Implemented** | `PgOutboxRepository.claimBatch()` (`FOR UPDATE SKIP LOCKED`), `OutboxWorker` (bounded concurrency, exponential backoff + jitter, DLQ), `POST /v1/webhooks/:providerKey` (HMAC-SHA256 test verifier, timestamp skew, replay dedupe). |
+| B-011 / B-012 / B-013 | Live POS / Payment / Courier adapters | **Blocked** | Provider-independent interfaces & contract tests implemented (`ProviderTimeoutError`, compensation, query-before-retry); live credentials/contracts pending. |
+| B-014 | Recoverable checkout orchestration | **Implemented** | Atomic quote consumption + order + snapshot + outbox commit before external calls; POS rejection compensation; payment/POS timeout `reconciliation_required`. |
+| B-015 | Operations control plane & RBAC | **Implemented** | `/v1/ops/*` endpoints with `ops_readonly` vs `ops_admin` RBAC, PII masking, DLQ replay, reconciliation resolution, capability suspension, and immutable `audit_records`. |
+| B-019 | Customer basket, quote & order timeline | **Implemented** | `CartCheckoutDrawer` (server-authoritative quote breakdown, capability gate) and `OrderTimelineModal` (persisted event timeline) in `@arrival/web`. |
