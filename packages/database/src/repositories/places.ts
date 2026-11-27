@@ -3,14 +3,35 @@ import {
   type Venue,
   type MerchantLocation,
   type SearchQuery,
+  type OrderabilityStatus,
   parseCountryCode,
 } from '@arrival/contracts';
+
+function deriveOrderability(row: {
+  has_verified_order_cap: boolean;
+  has_published_catalogue: boolean;
+  loc_listing_status: string;
+}): OrderabilityStatus {
+  if (row.has_verified_order_cap) {
+    return 'native_orderable';
+  }
+  if (row.has_published_catalogue) {
+    return 'catalogue_only';
+  }
+  if (row.loc_listing_status === 'pending_review') {
+    return 'capability_pending';
+  }
+  return 'not_integrated';
+}
 
 export class PgPlacesRepository {
   constructor(private readonly pool: pg.Pool) {}
 
   async search(query: SearchQuery): Promise<{ venues: Venue[]; locations: MerchantLocation[]; nextCursor?: string }> {
     const qTerm = `%${query.q.trim().toLowerCase()}%`;
+    const limit = Math.min(Math.max(query.limit ?? 20, 1), 100);
+    const offset = query.cursor ? Math.max(0, Number.parseInt(query.cursor, 10) || 0) : 0;
+
     const params: unknown[] = [qTerm];
     let sql = `
       SELECT
@@ -31,7 +52,20 @@ export class PgPlacesRepository {
         ml.timezone,
         ml.listing_status as loc_listing_status,
         ml.verified_at,
-        ml.created_at as loc_created_at
+        ml.created_at as loc_created_at,
+        EXISTS (
+          SELECT 1 FROM provider_capabilities pc
+          WHERE pc.capability = 'order_create'
+            AND pc.country_code = ml.country_code
+            AND (pc.location_id IS NULL OR pc.location_id = ml.id)
+            AND pc.status = 'production_verified'
+            AND pc.revoked_at IS NULL
+            AND (pc.expires_at IS NULL OR pc.expires_at > now())
+        ) as has_verified_order_cap,
+        EXISTS (
+          SELECT 1 FROM catalogues c
+          WHERE c.location_id = ml.id AND c.status = 'published'
+        ) as has_published_catalogue
       FROM venues v
       JOIN merchant_locations ml ON ml.venue_id = v.id
       WHERE (LOWER(v.display_name) LIKE $1 OR LOWER(v.normalized_name) LIKE $1)
@@ -43,22 +77,34 @@ export class PgPlacesRepository {
       sql += ` AND ml.country_code = $${params.length}`;
     }
 
+    if (query.lat !== undefined && query.lon !== undefined && query.radiusMeters !== undefined) {
+      params.push(query.lon, query.lat, query.radiusMeters);
+      const lonIdx = params.length - 2;
+      const latIdx = params.length - 1;
+      const radIdx = params.length;
+      sql += ` AND ST_DWithin(ml.location, ST_SetSRID(ST_MakePoint($${lonIdx}, $${latIdx}), 4326)::geography, $${radIdx})`;
+    }
+
     if (query.lat !== undefined && query.lon !== undefined) {
       params.push(query.lon, query.lat);
       const lonIdx = params.length - 1;
       const latIdx = params.length;
-      sql += ` ORDER BY ST_Distance(ml.location, ST_SetSRID(ST_MakePoint($${lonIdx}, $${latIdx}), 4326)::geography) ASC`;
+      sql += ` ORDER BY ST_Distance(ml.location, ST_SetSRID(ST_MakePoint($${lonIdx}, $${latIdx}), 4326)::geography) ASC, ml.id ASC`;
     } else {
-      sql += ` ORDER BY v.display_name ASC`;
+      sql += ` ORDER BY v.display_name ASC, ml.id ASC`;
     }
 
-    sql += ` LIMIT 50;`;
+    params.push(limit + 1, offset);
+    sql += ` LIMIT $${params.length - 1} OFFSET $${params.length};`;
 
     const res = await this.pool.query(sql, params);
+    const hasMore = res.rows.length > limit;
+    const rows = hasMore ? res.rows.slice(0, limit) : res.rows;
+
     const venuesMap = new Map<string, Venue>();
     const locations: MerchantLocation[] = [];
 
-    for (const row of res.rows) {
+    for (const row of rows) {
       if (!venuesMap.has(row.venue_id)) {
         venuesMap.set(row.venue_id, {
           id: row.venue_id,
@@ -83,7 +129,7 @@ export class PgPlacesRepository {
         },
         timezone: row.timezone,
         listingStatus: row.loc_listing_status,
-        orderability: 'native_orderable',
+        orderability: deriveOrderability(row),
         createdAt: new Date(row.loc_created_at).toISOString(),
         ...(row.merchant_id ? { merchantId: row.merchant_id } : {}),
         ...(row.verified_at ? { verifiedAt: new Date(row.verified_at).toISOString() } : {}),
@@ -95,6 +141,7 @@ export class PgPlacesRepository {
     return {
       venues: Array.from(venuesMap.values()),
       locations,
+      ...(hasMore ? { nextCursor: String(offset + limit) } : {}),
     };
   }
 
@@ -111,9 +158,22 @@ export class PgPlacesRepository {
         ST_Y(ml.location::geometry) as latitude,
         ST_X(ml.location::geometry) as longitude,
         ml.timezone,
-        ml.listing_status,
+        ml.listing_status as loc_listing_status,
         ml.verified_at,
-        ml.created_at
+        ml.created_at,
+        EXISTS (
+          SELECT 1 FROM provider_capabilities pc
+          WHERE pc.capability = 'order_create'
+            AND pc.country_code = ml.country_code
+            AND (pc.location_id IS NULL OR pc.location_id = ml.id)
+            AND pc.status = 'production_verified'
+            AND pc.revoked_at IS NULL
+            AND (pc.expires_at IS NULL OR pc.expires_at > now())
+        ) as has_verified_order_cap,
+        EXISTS (
+          SELECT 1 FROM catalogues c
+          WHERE c.location_id = ml.id AND c.status = 'published'
+        ) as has_published_catalogue
       FROM merchant_locations ml
       WHERE ml.id = $1
       LIMIT 1;
@@ -137,8 +197,8 @@ export class PgPlacesRepository {
         longitude: Number(row.longitude),
       },
       timezone: row.timezone,
-      listingStatus: row.listing_status,
-      orderability: 'native_orderable',
+      listingStatus: row.loc_listing_status,
+      orderability: deriveOrderability(row),
       createdAt: new Date(row.created_at).toISOString(),
       ...(row.merchant_id ? { merchantId: row.merchant_id } : {}),
       ...(row.verified_at ? { verifiedAt: new Date(row.verified_at).toISOString() } : {}),

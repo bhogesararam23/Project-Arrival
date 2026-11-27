@@ -6,3 +6,7 @@ export * from './guest.js';
 export * from './capabilities.js';
 export * from './idempotency.js';
 export * from './outbox.js';
+export * from './payments.js';
+export * from './fulfilment.js';
+export * from './webhooks.js';
+export * from './audit.js';
