@@ -64,7 +64,12 @@ The initial architecture is a modular TypeScript monolith with explicit domain b
 
 ## Current status
 
-**Stage: Trustworthy Core, Persistence & Research Validation (Milestone 2 Completed).** The platform extends beyond initial software scaffolding with verified production-grade invariants:
+**Stage: Milestone 3 — Transaction Orchestration, Event Infrastructure, Operations Control Plane & End-to-End Customer Experience.**
+- **PostgreSQL Persistence & Real Integration Suite:** Complete SQL repositories (`orders`, `quotes`, `payments`, `fulfilment`, `outbox`, `webhooks`, `audit`, `capabilities`, `places`, `catalogues`, `guest`, `idempotency`), migration `004_milestone3_core.sql`, dedicated-session advisory locking, pool timeouts, `/health/ready` DB probing, and real PostgreSQL + PostGIS integration tests wired in CI.
+- **Recoverable Transaction Orchestration:** Independent state machines for Order, Payment, Fulfilment, and Merchant POS; atomic quote consumption; immutable purchase snapshots; POS rejection compensation; and explicit `reconciliation_required` handling on provider timeouts.
+- **Durable Outbox & Webhook Inbox:** `FOR UPDATE SKIP LOCKED` worker claiming, bounded concurrency, exponential backoff + jitter, dead-letter queue, and signature-first replay-resistant webhook ingress.
+- **Operations Control Plane & Fail-Closed Capabilities:** Authenticated `/v1/ops/*` endpoints with `ops_readonly` vs `ops_admin` RBAC, PII masking, and immutable `audit_records`. Mock providers default to `sandbox_verified` and fail closed unless explicitly configured for controlled synthetic tests.
+- **Customer Checkout Preparation & Order Tracking:** React client basket, destination entry, server-authoritative quote breakdown, capability gate, and persisted order event timeline.
 - **Security & Guest Auth:** Cryptographic token digest guest authentication (SHA-256), elimination of simulated tokens, granular scoped access grants (`read_order` vs `cancel_order`), and order enumeration protection (404 on unauthenticated lookup).
 - **Transaction Integrity & Money Arithmetic:** Exact integer minor-unit Money calculations using BigInt without floating-point drift, Hare-Niemeyer largest-remainder allocation (`allocate()`), market-specific pricing rules (UK/EU tax-inclusive VAT vs US/CA destination sales tax), modifier group constraints, and POS failure compensation.
 - **Atomic Two-Phase Idempotency:** Distributed locking with lease expiration (`in_progress` -> `completed`), concurrent conflict rejection (409 Conflict), and payload mismatch rejection (422 Unprocessable Entity).

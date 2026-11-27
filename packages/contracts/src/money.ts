@@ -175,6 +175,10 @@ export class Money {
     return this.currency === other.currency && this.amountMinor === other.amountMinor;
   }
 
+  static formatJson(json: MoneyJson, locale = 'en-GB'): string {
+    return Money.fromJson(json).format(locale);
+  }
+
   format(locale = 'en-GB'): string {
     const exp = this.exponent;
     const majorNumber = Number(this.toMajorString());

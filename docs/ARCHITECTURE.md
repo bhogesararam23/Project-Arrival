@@ -117,3 +117,14 @@ Monetary calculations use integer minor units with exact exponent precision. Fra
 
 ### 11.5 Spatial Blocking Boundary Recall
 Entity resolution blocking integrates a 3x3 Moore neighborhood (forward neighbor grid cells) to recover candidate pairs that straddle ~1.1km spatial cell boundaries. Dense spatial clusters and high-frequency name blocks are sub-blocked by secondary attributes rather than dropped, maintaining a 0.00% False Merge Rate with 100% recall on golden benchmark truth.
+
+## 12. Milestone 3: Transaction Orchestration, Event Infrastructure & Operations Control Plane
+
+### 12.1 Recoverable Order, Payment & Fulfilment Orchestration
+Orders, payments (`payment_attempts`), fulfilment (`fulfilment_attempts`), and merchant POS states (`merchant_order_state`) operate as independent state machines with explicit transition guards. Order submission atomically consumes the quote, persists the immutable `purchase_snapshot`, `order_items`, `guest_order_grants`, and initial `outbox` message in a single PostgreSQL transaction before invoking external adapters. Provider timeouts transition to `reconciliation_required` / `submission_timeout` and persist `compensation_records` rather than blindly retrying financial charges.
+
+### 12.2 Durable Outbox Worker & Webhook Inbox
+`PgOutboxRepository.claimBatch()` uses `FOR UPDATE SKIP LOCKED` with worker leases (`worker_id`, `lease_token`, `locked_until`). `OutboxWorker` provides bounded concurrency, exponential backoff with jitter, and dead-letter isolation. `POST /v1/webhooks/:providerKey` verifies cryptographic signatures and timestamp skew prior to deduplicated persistence in `webhook_inbox`.
+
+### 12.3 Operations Control Plane
+Authenticated `/v1/ops/*` endpoints enforce `ops_readonly` vs `ops_admin` RBAC, mask PII in order investigations, allow dead-letter replay, payment reconciliation resolution, and capability suspension, and record immutable `audit_records` for all privileged actions.

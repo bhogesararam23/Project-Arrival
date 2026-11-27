@@ -4,6 +4,12 @@ import type {
   MerchantLocation,
   Catalogue,
   ProblemDetails,
+  QuoteRequest,
+  Quote,
+  CreateOrderRequest,
+  OrderCreated,
+  OrderView,
+  OrderEventsResponse,
 } from '@arrival/contracts';
 
 export class ApiClientError extends Error {
@@ -76,6 +82,55 @@ export class ApiClient {
 
   async getCatalogue(locationId: string): Promise<Catalogue> {
     return this.request<Catalogue>(`/v1/catalogues/${encodeURIComponent(locationId)}`);
+  }
+
+  async createGuestSession(): Promise<{ sessionId: string; sessionToken: string; expiresAt: string }> {
+    return this.request('/v1/guest-sessions', { method: 'POST' });
+  }
+
+  async createQuote(
+    body: QuoteRequest,
+    options: { idempotencyKey: string; sessionToken?: string }
+  ): Promise<Quote> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': options.idempotencyKey,
+    };
+    if (options.sessionToken) {
+      headers['Authorization'] = `Bearer ${options.sessionToken}`;
+    }
+    return this.request<Quote>('/v1/checkout-quotes', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+  }
+
+  async submitOrder(
+    body: CreateOrderRequest,
+    options: { idempotencyKey: string; sessionToken: string }
+  ): Promise<OrderCreated> {
+    return this.request<OrderCreated>('/v1/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': options.idempotencyKey,
+        Authorization: `Bearer ${options.sessionToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async getOrder(orderId: string, accessToken: string): Promise<OrderView> {
+    return this.request<OrderView>(`/v1/orders/${encodeURIComponent(orderId)}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  }
+
+  async getOrderEvents(orderId: string, accessToken: string): Promise<OrderEventsResponse> {
+    return this.request<OrderEventsResponse>(`/v1/orders/${encodeURIComponent(orderId)}/events`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
   }
 }
 

@@ -108,4 +108,18 @@ describe('DatabaseMigrator', () => {
     const rolledBackEmpty = await migrator.down();
     expect(rolledBackEmpty).toBeNull();
   });
+
+  it('fails closed when advisory lock acquisition fails and requireLock is true', async () => {
+    const failingLockClient: MigrationClient = {
+      async query(sql: string) {
+        if (sql.includes('pg_advisory_lock')) {
+          throw new Error('lock timeout');
+        }
+        return { rows: [] };
+      },
+    };
+
+    const strictMigrator = new DatabaseMigrator(failingLockClient, dummyMigrations, { requireLock: true });
+    await expect(strictMigrator.up()).rejects.toThrow(/Failed to acquire PostgreSQL migration advisory lock/);
+  });
 });

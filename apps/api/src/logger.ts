@@ -7,6 +7,8 @@ const REDACT_KEYS = new Set([
   'cookie',
   'sessiontoken',
   'guestaccessgrant',
+  'guestcancelgrant',
+  'tokendigest',
   'token',
   'secret',
   'password',
@@ -16,6 +18,12 @@ const REDACT_KEYS = new Set([
   'phone',
   'email',
   'recipientcontact',
+  'recipientname',
+  'address_ciphertext',
+  'recipient_ciphertext',
+  'latitude',
+  'longitude',
+  'coordinates',
 ]);
 
 function redact(obj: unknown, depth = 0): unknown {

@@ -85,7 +85,42 @@ export class PgIdempotencyRepository {
     try {
       await client.query('BEGIN;');
 
-      // Select existing record with row lock
+      const now = Date.now();
+      const lockUntilIso = new Date(now + lockDurationMs).toISOString();
+
+      // Attempt atomic first-time insert to avoid SELECT FOR UPDATE 0-row insert race (23505)
+      const insertRes = await client.query(
+        `INSERT INTO idempotency_records (
+          principal_scope, operation, idempotency_key, request_hash,
+          status, locked_until, created_at, expires_at
+        ) VALUES (
+          $1, $2, $3, decode($4, 'hex'),
+          'pending', $5, now(), now() + interval '24 hours'
+        )
+        ON CONFLICT (principal_scope, operation, idempotency_key) DO NOTHING
+        RETURNING id, created_at, expires_at;`,
+        [principalScope, operation, key, requestHash, lockUntilIso]
+      );
+
+      if (insertRes.rows.length > 0) {
+        const inserted = insertRes.rows[0];
+        const newRecord: IdempotencyRecord = {
+          id: inserted.id,
+          principalScope,
+          operation,
+          idempotencyKey: key,
+          requestHash,
+          status: 'pending',
+          lockedUntil: lockUntilIso,
+          createdAt: new Date(inserted.created_at).toISOString(),
+          expiresAt: new Date(inserted.expires_at).toISOString(),
+        };
+
+        await client.query('COMMIT;');
+        return { success: true, record: newRecord };
+      }
+
+      // Row already exists: lock it exclusively for inspection/update
       const existingRes = await client.query(
         `SELECT
           id, principal_scope, operation, idempotency_key,
@@ -97,9 +132,6 @@ export class PgIdempotencyRepository {
          FOR UPDATE;`,
         [principalScope, operation, key]
       );
-
-      const now = Date.now();
-      const lockUntilIso = new Date(now + lockDurationMs).toISOString();
 
       if (existingRes.rows.length > 0) {
         const row = existingRes.rows[0];
@@ -156,33 +188,8 @@ export class PgIdempotencyRepository {
         }
       }
 
-      // Insert fresh pending record
-      const insertRes = await client.query(
-        `INSERT INTO idempotency_records (
-          principal_scope, operation, idempotency_key, request_hash,
-          status, locked_until, created_at, expires_at
-        ) VALUES (
-          $1, $2, $3, decode($4, 'hex'),
-          'pending', $5, now(), now() + interval '24 hours'
-        ) RETURNING id, created_at, expires_at;`,
-        [principalScope, operation, key, requestHash, lockUntilIso]
-      );
-
-      const inserted = insertRes.rows[0];
-      const newRecord: IdempotencyRecord = {
-        id: inserted.id,
-        principalScope,
-        operation,
-        idempotencyKey: key,
-        requestHash,
-        status: 'pending',
-        lockedUntil: lockUntilIso,
-        createdAt: new Date(inserted.created_at).toISOString(),
-        expiresAt: new Date(inserted.expires_at).toISOString(),
-      };
-
       await client.query('COMMIT;');
-      return { success: true, record: newRecord };
+      return { success: false, conflictReason: 'in_progress' };
     } catch (err) {
       await client.query('ROLLBACK;');
       throw err;

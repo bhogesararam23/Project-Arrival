@@ -22,3 +22,6 @@ Current records:
 - [0006 — Entity Resolution Algorithm Strategy and Native Component Boundaries](0006-entity-resolution-and-native-engine-strategy.md)
 - [0007 — Scoped Guest Order Grants and Atomic Idempotency](0007-scoped-guest-order-grants-and-atomic-idempotency.md)
 - [0008 — PostgreSQL Persistence Layer, Migration Tamper-Resistance, and Production Fail-Fast](0008-postgresql-persistence-and-production-fail-fast.md)
+- [0009 — Durable Outbox Worker Leasing and Webhook Inbox Deduplication](0009-durable-outbox-worker-leasing-and-webhook-inbox.md)
+- [0010 — Independent Order, Payment, and Fulfilment Orchestration & Reconciliation](0010-independent-order-payment-fulfilment-reconciliation.md)
+- [0011 — Operations Control Plane, Operator RBAC, and Capability Governance](0011-operations-control-plane-and-capability-governance.md)

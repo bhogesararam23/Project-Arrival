@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildApp } from '../src/app.js';
+import { InMemoryCapabilityRepository, SYNTHETIC_TEST_CAPABILITIES } from '../src/repositories/in-memory.js';
 import type { FastifyInstance } from 'fastify';
 
 describe('Orders and Guest Sessions API endpoints', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    app = buildApp();
+    app = buildApp({
+      capabilityRepo: new InMemoryCapabilityRepository(SYNTHETIC_TEST_CAPABILITIES),
+    });
     await app.ready();
   });
 
@@ -63,7 +66,8 @@ describe('Orders and Guest Sessions API endpoints', () => {
     expect(orderRes.headers['location']).toBeDefined();
     const orderCreated = JSON.parse(orderRes.payload);
     expect(orderCreated.orderId).toBeDefined();
-    expect(orderCreated.orderState).toBe('submitted');
+    expect(orderCreated.orderState).toBe('awaiting_merchant');
+    expect(orderCreated.merchantOrderState).toBe('submission_accepted_for_processing');
     expect(orderCreated.paymentState).toBe('authorized');
     expect(orderCreated.guestAccessGrant).toBeDefined();
     expect(orderCreated.guestCancelGrant).toBeDefined();

@@ -9,6 +9,8 @@ import {
 import {
   InMemoryGuestSessionRepository,
   InMemoryIdempotencyRepository,
+  InMemoryCapabilityRepository,
+  SYNTHETIC_TEST_CAPABILITIES,
 } from '../src/repositories/in-memory.js';
 
 describe('Security, Guest Session, and Scoped Grant Enforcement', () => {
@@ -19,7 +21,11 @@ describe('Security, Guest Session, and Scoped Grant Enforcement', () => {
   beforeAll(async () => {
     guestRepo = new InMemoryGuestSessionRepository();
     idempotencyRepo = new InMemoryIdempotencyRepository();
-    app = buildApp({ guestRepo, idempotencyRepo });
+    app = buildApp({
+      guestRepo,
+      idempotencyRepo,
+      capabilityRepo: new InMemoryCapabilityRepository(SYNTHETIC_TEST_CAPABILITIES),
+    });
     await app.ready();
   });
 

@@ -1,9 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import type {
   Venue,
   MerchantLocation,
   SearchQuery,
   Catalogue,
   Quote,
+  QuoteLineSnapshot,
+  PricingBreakdown,
+  PurchaseSnapshot,
   OrderView,
   OrderCreated,
   OrderEventItem,
@@ -12,18 +16,30 @@ import type {
   ProviderCapability,
   IdempotencyRecord,
   OutboxMessage,
+  WebhookInboxMessage,
   OrderState,
+  MerchantOrderState,
+  PaymentAttemptRecord,
+  PaymentState,
+  FulfilmentAttemptRecord,
+  FulfilmentState,
+  CompensationRecord,
+  AuditRecord,
 } from '@arrival/contracts';
-import { parseCountryCode, parseCurrencyCode } from '@arrival/contracts';
+import { parseCountryCode, parseCurrencyCode, isCapabilityActive } from '@arrival/contracts';
 import type {
   IPlacesRepository,
   ICatalogueRepository,
   IQuotesRepository,
   IOrderRepository,
+  IPaymentRepository,
+  IFulfilmentRepository,
   IGuestSessionRepository,
   ICapabilityRepository,
   IIdempotencyRepository,
   IOutboxRepository,
+  IWebhookInboxRepository,
+  IAuditRepository,
 } from './interfaces.js';
 
 // ============================================================================
@@ -216,35 +232,52 @@ export const FIXTURE_CAPABILITIES: ProviderCapability[] = [
   {
     id: 'cap-001',
     providerKey: 'mock_pos',
+    providerAccountRef: 'sandbox-account-uk',
     capability: 'order_create',
     countryCode: parseCountryCode('GB'),
+    merchantId: 'm1000000-0000-4000-a000-000000000001',
     locationId: 'f1000000-0000-4000-a000-000000000001',
     currency: parseCurrencyCode('GBP'),
-    status: 'production_verified',
-    evidenceUrl: 'https://arrival.internal/audit/pilot-uk-001',
+    status: 'sandbox_verified',
+    evidenceUrl: 'synthetic://sandbox/mock-pos-uk',
+    reviewedBy: 'system_fixture',
     reviewedAt: '2026-01-01T00:00:00Z',
   },
   {
     id: 'cap-002',
     providerKey: 'mock_payment',
+    providerAccountRef: 'sandbox-pay-uk',
     capability: 'charge_collect',
     countryCode: parseCountryCode('GB'),
     currency: parseCurrencyCode('GBP'),
-    status: 'production_verified',
-    evidenceUrl: 'https://arrival.internal/audit/pilot-uk-payment',
+    status: 'sandbox_verified',
+    evidenceUrl: 'synthetic://sandbox/mock-payment-uk',
+    reviewedBy: 'system_fixture',
     reviewedAt: '2026-01-01T00:00:00Z',
   },
   {
     id: 'cap-003',
     providerKey: 'mock_delivery',
+    providerAccountRef: 'sandbox-del-uk',
     capability: 'delivery_quote_and_dispatch',
     countryCode: parseCountryCode('GB'),
     currency: parseCurrencyCode('GBP'),
-    status: 'production_verified',
-    evidenceUrl: 'https://arrival.internal/audit/pilot-uk-fulfilment',
+    status: 'sandbox_verified',
+    evidenceUrl: 'synthetic://sandbox/mock-delivery-uk',
+    reviewedBy: 'system_fixture',
     reviewedAt: '2026-01-01T00:00:00Z',
   },
 ];
+
+/**
+ * TEST-ONLY synthetic capability fixture for controlled E2E / integration tests.
+ * Never represents real commercial approval or live production readiness.
+ */
+export const SYNTHETIC_TEST_CAPABILITIES: ProviderCapability[] = FIXTURE_CAPABILITIES.map((c) => ({
+  ...c,
+  status: 'production_verified' as const,
+  evidenceUrl: `synthetic-test-only://${c.providerKey}/${c.countryCode}`,
+}));
 
 // Calculate Haversine distance in meters
 function computeHaversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -325,9 +358,33 @@ export class InMemoryCatalogueRepository implements ICatalogueRepository {
 }
 
 export class InMemoryQuotesRepository implements IQuotesRepository {
-  private readonly quotes = new Map<string, { quote: Quote; locationId: string; destinationCountry: string; items: any[]; guestSessionId?: string | undefined; consumedAt?: string | undefined }>();
+  private readonly quotes = new Map<
+    string,
+    {
+      quote: Quote;
+      locationId: string;
+      destinationCountry: string;
+      items: QuoteLineSnapshot[];
+      guestSessionId?: string | undefined;
+      customerId?: string | undefined;
+      deliveryAddressFormatted?: string | undefined;
+      pricingBreakdown?: PricingBreakdown | undefined;
+      consumedAt?: string | undefined;
+    }
+  >();
 
-  async save(quote: Quote, metadata: { locationId: string; destinationCountry: string; items: any[]; guestSessionId?: string | undefined }): Promise<void> {
+  async save(
+    quote: Quote,
+    metadata: {
+      locationId: string;
+      destinationCountry: string;
+      items: QuoteLineSnapshot[];
+      guestSessionId?: string | undefined;
+      customerId?: string | undefined;
+      deliveryAddressFormatted?: string | undefined;
+      pricingBreakdown?: PricingBreakdown | undefined;
+    }
+  ): Promise<void> {
     this.quotes.set(quote.quoteId, { quote, ...metadata });
   }
 
@@ -335,11 +392,13 @@ export class InMemoryQuotesRepository implements IQuotesRepository {
     return this.quotes.get(quoteId) || null;
   }
 
-  async markConsumed(quoteId: string): Promise<void> {
+  async markConsumed(quoteId: string): Promise<boolean> {
     const existing = this.quotes.get(quoteId);
-    if (existing) {
-      existing.consumedAt = new Date().toISOString();
+    if (!existing || existing.consumedAt || new Date(existing.quote.expiresAt).getTime() <= Date.now()) {
+      return false;
     }
+    existing.consumedAt = new Date().toISOString();
+    return true;
   }
 }
 
@@ -347,16 +406,58 @@ export class InMemoryOrderRepository implements IOrderRepository {
   private readonly orders = new Map<string, OrderCreated>();
   private readonly events = new Map<string, OrderEventItem[]>();
 
-  async createOrder(order: OrderCreated, _quote: Quote, _outboxPayload: unknown): Promise<void> {
-    this.orders.set(order.orderId, order);
-    this.events.set(order.orderId, [
+  constructor(
+    private readonly quotesRepo?: IQuotesRepository,
+    private readonly outboxRepo?: IOutboxRepository,
+    private readonly guestRepo?: IGuestSessionRepository
+  ) {}
+
+  async createOrder(params: {
+    order: OrderCreated;
+    quote: Quote;
+    locationId: string;
+    purchaseSnapshot: PurchaseSnapshot;
+    items: QuoteLineSnapshot[];
+    guestSessionId?: string | undefined;
+    customerId?: string | undefined;
+    idempotencyRecordId: string;
+    outboxMessages: OutboxMessage[];
+    guestGrants?: GuestOrderGrantRecord[] | undefined;
+  }): Promise<{ quoteConsumed: boolean }> {
+    if (this.quotesRepo) {
+      const consumed = await this.quotesRepo.markConsumed(params.quote.quoteId);
+      if (!consumed) {
+        return { quoteConsumed: false };
+      }
+    }
+
+    const storedOrder: OrderCreated = {
+      ...params.order,
+      purchaseSnapshot: params.purchaseSnapshot,
+    };
+    this.orders.set(params.order.orderId, storedOrder);
+    this.events.set(params.order.orderId, [
       {
         eventType: 'order_submitted',
-        occurredAt: order.updatedAt,
-        message: 'Order submitted and accepted for processing',
-        source: 'arrival_operator',
+        occurredAt: params.order.updatedAt,
+        message: 'Order submitted and queued for orchestration',
+        source: 'arrival_api',
       },
     ]);
+
+    if (this.guestRepo && params.guestGrants) {
+      for (const grant of params.guestGrants) {
+        await this.guestRepo.createOrderGrant(grant);
+      }
+    }
+
+    if (this.outboxRepo) {
+      for (const msg of params.outboxMessages) {
+        await this.outboxRepo.publish(msg);
+      }
+    }
+
+    return { quoteConsumed: true };
   }
 
   async getById(orderId: string): Promise<OrderView | null> {
@@ -367,7 +468,9 @@ export class InMemoryOrderRepository implements IOrderRepository {
       orderState: order.orderState,
       paymentState: order.paymentState,
       fulfilmentState: order.fulfilmentState,
+      ...(order.merchantOrderState !== undefined ? { merchantOrderState: order.merchantOrderState } : {}),
       updatedAt: order.updatedAt,
+      ...(order.purchaseSnapshot ? { purchaseSnapshot: order.purchaseSnapshot } : {}),
     };
   }
 
@@ -375,18 +478,73 @@ export class InMemoryOrderRepository implements IOrderRepository {
     return this.events.get(orderId) || [];
   }
 
-  async recordEvent(orderId: string, event: OrderEventItem): Promise<void> {
+  async recordEvent(
+    orderId: string,
+    event: OrderEventItem & { fromState?: OrderState; toState?: OrderState }
+  ): Promise<void> {
     const list = this.events.get(orderId) || [];
-    list.push(event);
+    list.push({
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      source: event.source,
+      ...(event.message ? { message: event.message } : {}),
+    });
     this.events.set(orderId, list);
   }
 
-  async updateState(orderId: string, newState: OrderState): Promise<void> {
+  async updateState(orderId: string, newState: OrderState, expectedFromState?: OrderState): Promise<boolean> {
+    const existing = this.orders.get(orderId);
+    if (!existing) return false;
+    if (expectedFromState && existing.orderState !== expectedFromState) {
+      return false;
+    }
+    existing.orderState = newState;
+    existing.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  async updateMerchantOrderState(
+    orderId: string,
+    newState: MerchantOrderState,
+    _providerPosRef?: string
+  ): Promise<void> {
     const existing = this.orders.get(orderId);
     if (existing) {
-      existing.orderState = newState;
+      existing.merchantOrderState = newState;
       existing.updatedAt = new Date().toISOString();
     }
+  }
+
+  async syncPaymentState(orderId: string, state: PaymentState): Promise<void> {
+    const existing = this.orders.get(orderId);
+    if (existing) {
+      existing.paymentState = state;
+      existing.updatedAt = new Date().toISOString();
+    }
+  }
+
+  async syncFulfilmentState(orderId: string, state: FulfilmentState): Promise<void> {
+    const existing = this.orders.get(orderId);
+    if (existing) {
+      existing.fulfilmentState = state;
+      existing.updatedAt = new Date().toISOString();
+    }
+  }
+
+  async listOrders(filters?: { state?: OrderState; limit?: number }): Promise<OrderView[]> {
+    let items = Array.from(this.orders.values());
+    if (filters?.state) {
+      items = items.filter((o) => o.orderState === filters.state);
+    }
+    return items.slice(0, filters?.limit ?? 50).map((o) => ({
+      orderId: o.orderId,
+      orderState: o.orderState,
+      paymentState: o.paymentState,
+      fulfilmentState: o.fulfilmentState,
+      ...(o.merchantOrderState !== undefined ? { merchantOrderState: o.merchantOrderState } : {}),
+      updatedAt: o.updatedAt,
+      ...(o.purchaseSnapshot ? { purchaseSnapshot: o.purchaseSnapshot } : {}),
+    }));
   }
 }
 
@@ -430,9 +588,14 @@ export class InMemoryGuestSessionRepository implements IGuestSessionRepository {
 }
 
 export class InMemoryCapabilityRepository implements ICapabilityRepository {
-  constructor(private readonly capabilities: ProviderCapability[] = [...FIXTURE_CAPABILITIES]) {}
+  constructor(private readonly capabilities: ProviderCapability[] = FIXTURE_CAPABILITIES.map((c) => ({ ...c }))) {}
 
-  async getCapability(providerKey: string, capability: string, countryCode: string, locationId?: string): Promise<ProviderCapability | null> {
+  async getCapability(
+    providerKey: string,
+    capability: string,
+    countryCode: string,
+    locationId?: string
+  ): Promise<ProviderCapability | null> {
     return (
       this.capabilities.find(
         (c) =>
@@ -445,7 +608,20 @@ export class InMemoryCapabilityRepository implements ICapabilityRepository {
   }
 
   async listActiveCapabilities(): Promise<ProviderCapability[]> {
-    return this.capabilities.filter((c) => c.status === 'production_verified');
+    return this.capabilities.filter((c) => isCapabilityActive(c));
+  }
+
+  async listAllCapabilities(): Promise<ProviderCapability[]> {
+    return [...this.capabilities];
+  }
+
+  async suspendCapability(id: string, reason: string): Promise<boolean> {
+    const cap = this.capabilities.find((c) => c.id === id);
+    if (!cap) return false;
+    cap.status = 'suspended';
+    cap.revokedAt = new Date().toISOString();
+    cap.revocationReason = reason;
+    return true;
   }
 }
 
@@ -553,10 +729,288 @@ export class InMemoryOutboxRepository implements IOutboxRepository {
   private readonly messages: OutboxMessage[] = [];
 
   async publish(message: OutboxMessage): Promise<void> {
-    this.messages.push(message);
+    this.messages.push({ ...message, maxAttempts: message.maxAttempts ?? 5 });
   }
 
   async fetchPending(limit: number): Promise<OutboxMessage[]> {
-    return this.messages.filter((m) => !m.publishedAt).slice(0, limit);
+    const now = Date.now();
+    return this.messages
+      .filter(
+        (m) =>
+          !m.publishedAt &&
+          !m.deadLetteredAt &&
+          new Date(m.availableAt).getTime() <= now &&
+          (!m.lockedUntil || new Date(m.lockedUntil).getTime() <= now)
+      )
+      .slice(0, limit);
+  }
+
+  async claimBatch(workerId: string, limit: number, leaseDurationMs: number): Promise<OutboxMessage[]> {
+    const now = Date.now();
+    const lockUntil = new Date(now + leaseDurationMs).toISOString();
+    const claimed: OutboxMessage[] = [];
+
+    for (const msg of this.messages) {
+      if (claimed.length >= limit) break;
+      if (
+        !msg.publishedAt &&
+        !msg.deadLetteredAt &&
+        new Date(msg.availableAt).getTime() <= now &&
+        (!msg.lockedUntil || new Date(msg.lockedUntil).getTime() <= now)
+      ) {
+        msg.workerId = workerId;
+        msg.leaseToken = randomUUID();
+        msg.lockedUntil = lockUntil;
+        msg.attempts += 1;
+        claimed.push({ ...msg });
+      }
+    }
+
+    return claimed;
+  }
+
+  async complete(messageId: string, leaseToken: string): Promise<boolean> {
+    const msg = this.messages.find((m) => m.id === messageId && m.leaseToken === leaseToken && !m.publishedAt);
+    if (!msg) return false;
+    msg.publishedAt = new Date().toISOString();
+    msg.lockedUntil = null;
+    msg.leaseToken = null;
+    return true;
+  }
+
+  async scheduleRetry(
+    messageId: string,
+    leaseToken: string,
+    nextAvailableAt: string,
+    errorMessage: string
+  ): Promise<boolean> {
+    const msg = this.messages.find(
+      (m) => m.id === messageId && m.leaseToken === leaseToken && !m.publishedAt && !m.deadLetteredAt
+    );
+    if (!msg) return false;
+    msg.availableAt = nextAvailableAt;
+    msg.lockedUntil = null;
+    msg.leaseToken = null;
+    msg.lastError = errorMessage;
+    return true;
+  }
+
+  async deadLetter(messageId: string, leaseToken: string, errorMessage: string): Promise<boolean> {
+    const msg = this.messages.find((m) => m.id === messageId && m.leaseToken === leaseToken && !m.publishedAt);
+    if (!msg) return false;
+    msg.deadLetteredAt = new Date().toISOString();
+    msg.lockedUntil = null;
+    msg.leaseToken = null;
+    msg.lastError = errorMessage;
+    return true;
+  }
+
+  async listDeadLetter(limit = 50): Promise<OutboxMessage[]> {
+    return this.messages.filter((m) => Boolean(m.deadLetteredAt)).slice(0, limit);
+  }
+
+  async replayDeadLetter(messageId: string): Promise<boolean> {
+    const msg = this.messages.find((m) => m.id === messageId && Boolean(m.deadLetteredAt) && !m.publishedAt);
+    if (!msg) return false;
+    msg.deadLetteredAt = null;
+    msg.lockedUntil = null;
+    msg.leaseToken = null;
+    msg.workerId = null;
+    msg.attempts = 0;
+    msg.availableAt = new Date().toISOString();
+    msg.lastError = null;
+    return true;
+  }
+
+  async getMetrics(): Promise<{ pendingCount: number; deadLetteredCount: number }> {
+    return {
+      pendingCount: this.messages.filter((m) => !m.publishedAt && !m.deadLetteredAt).length,
+      deadLetteredCount: this.messages.filter((m) => Boolean(m.deadLetteredAt)).length,
+    };
+  }
+}
+
+export class InMemoryPaymentRepository implements IPaymentRepository {
+  private readonly attempts = new Map<string, PaymentAttemptRecord>();
+  private readonly events: Array<{ id: string; paymentAttemptId: string; eventType: string }> = [];
+
+  constructor(private readonly orderRepo?: InMemoryOrderRepository) {}
+
+  async createAttempt(attempt: PaymentAttemptRecord): Promise<void> {
+    this.attempts.set(attempt.id, { ...attempt });
+    if (this.orderRepo) {
+      await this.orderRepo.syncPaymentState(attempt.orderId, attempt.state);
+    }
+  }
+
+  async updateState(
+    attemptId: string,
+    newState: PaymentState,
+    providerPaymentRef?: string
+  ): Promise<PaymentAttemptRecord | null> {
+    const attempt = this.attempts.get(attemptId);
+    if (!attempt) return null;
+    attempt.state = newState;
+    if (providerPaymentRef) {
+      attempt.providerPaymentRef = providerPaymentRef;
+    }
+    attempt.updatedAt = new Date().toISOString();
+    if (this.orderRepo) {
+      await this.orderRepo.syncPaymentState(attempt.orderId, newState);
+    }
+    return { ...attempt };
+  }
+
+  async getLatestByOrderId(orderId: string): Promise<PaymentAttemptRecord | null> {
+    const matching = Array.from(this.attempts.values())
+      .filter((a) => a.orderId === orderId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return matching[0] ? { ...matching[0] } : null;
+  }
+
+  async recordEvent(params: {
+    id: string;
+    paymentAttemptId: string;
+    eventType: string;
+  }): Promise<void> {
+    this.events.push({ id: params.id, paymentAttemptId: params.paymentAttemptId, eventType: params.eventType });
+  }
+
+  async listReconciliationRequired(limit = 50): Promise<PaymentAttemptRecord[]> {
+    return Array.from(this.attempts.values())
+      .filter((a) => a.state === 'reconciliation_required')
+      .slice(0, limit);
+  }
+}
+
+export class InMemoryFulfilmentRepository implements IFulfilmentRepository {
+  private readonly attempts = new Map<string, FulfilmentAttemptRecord>();
+
+  constructor(private readonly orderRepo?: InMemoryOrderRepository) {}
+
+  async createAttempt(attempt: FulfilmentAttemptRecord): Promise<void> {
+    this.attempts.set(attempt.id, { ...attempt });
+    if (this.orderRepo) {
+      await this.orderRepo.syncFulfilmentState(attempt.orderId, attempt.state);
+    }
+  }
+
+  async updateState(
+    attemptId: string,
+    newState: FulfilmentState,
+    providerDeliveryRef?: string
+  ): Promise<FulfilmentAttemptRecord | null> {
+    const attempt = this.attempts.get(attemptId);
+    if (!attempt) return null;
+    attempt.state = newState;
+    if (providerDeliveryRef) {
+      attempt.providerDeliveryRef = providerDeliveryRef;
+    }
+    attempt.updatedAt = new Date().toISOString();
+    if (this.orderRepo) {
+      await this.orderRepo.syncFulfilmentState(attempt.orderId, newState);
+    }
+    return { ...attempt };
+  }
+
+  async getLatestByOrderId(orderId: string): Promise<FulfilmentAttemptRecord | null> {
+    const matching = Array.from(this.attempts.values())
+      .filter((a) => a.orderId === orderId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return matching[0] ? { ...matching[0] } : null;
+  }
+}
+
+export class InMemoryWebhookInboxRepository implements IWebhookInboxRepository {
+  private readonly messages = new Map<string, WebhookInboxMessage>();
+
+  private keyOf(providerKey: string, accountRef: string, eventRef: string): string {
+    return `${providerKey}:${accountRef}:${eventRef}`;
+  }
+
+  async ingest(message: WebhookInboxMessage): Promise<{ inserted: boolean; message: WebhookInboxMessage }> {
+    const k = this.keyOf(message.providerKey, message.providerAccountRef, message.providerEventRef);
+    const existing = this.messages.get(k);
+    if (existing) {
+      return { inserted: false, message: existing };
+    }
+    this.messages.set(k, { ...message });
+    return { inserted: true, message };
+  }
+
+  async getByProviderEvent(
+    providerKey: string,
+    providerAccountRef: string,
+    providerEventRef: string
+  ): Promise<WebhookInboxMessage | null> {
+    return this.messages.get(this.keyOf(providerKey, providerAccountRef, providerEventRef)) || null;
+  }
+
+  async markProcessed(id: string): Promise<void> {
+    for (const msg of this.messages.values()) {
+      if (msg.id === id) {
+        msg.status = 'processed';
+        msg.processedAt = new Date().toISOString();
+        msg.processingError = null;
+        break;
+      }
+    }
+  }
+
+  async markFailed(id: string, errorMessage: string): Promise<void> {
+    for (const msg of this.messages.values()) {
+      if (msg.id === id) {
+        msg.status = 'failed';
+        msg.attempts += 1;
+        msg.processingError = errorMessage;
+        break;
+      }
+    }
+  }
+
+  async listFailed(limit = 50): Promise<WebhookInboxMessage[]> {
+    return Array.from(this.messages.values())
+      .filter((m) => m.status === 'failed' || m.status === 'dead_lettered')
+      .slice(0, limit);
+  }
+}
+
+export class InMemoryAuditRepository implements IAuditRepository {
+  private readonly audits: AuditRecord[] = [];
+  private readonly compensations = new Map<string, CompensationRecord>();
+
+  async recordAudit(record: AuditRecord): Promise<void> {
+    this.audits.push({ ...record });
+  }
+
+  async listAuditByResource(resourceType: string, resourceId: string, limit = 50): Promise<AuditRecord[]> {
+    return this.audits
+      .filter((a) => a.resourceType === resourceType && a.resourceId === resourceId)
+      .slice(-limit)
+      .reverse();
+  }
+
+  async createCompensation(record: CompensationRecord): Promise<void> {
+    this.compensations.set(record.id, { ...record });
+  }
+
+  async updateCompensationState(
+    id: string,
+    state: CompensationRecord['state'],
+    providerRef?: string,
+    lastError?: string
+  ): Promise<void> {
+    const rec = this.compensations.get(id);
+    if (rec) {
+      rec.state = state;
+      if (providerRef) rec.providerRef = providerRef;
+      if (lastError !== undefined) rec.lastError = lastError;
+      rec.attempts += 1;
+      rec.updatedAt = new Date().toISOString();
+    }
+  }
+
+  async listCompensationsByOrder(orderId: string): Promise<CompensationRecord[]> {
+    return Array.from(this.compensations.values()).filter((c) => c.orderId === orderId);
   }
 }

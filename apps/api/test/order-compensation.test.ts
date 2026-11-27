@@ -18,6 +18,7 @@ import {
   InMemoryCapabilityRepository,
   InMemoryPlacesRepository,
   InMemoryCatalogueRepository,
+  SYNTHETIC_TEST_CAPABILITIES,
 } from '../src/repositories/in-memory.js';
 
 describe('Order POS Rejection and Payment Compensation Flow', () => {
@@ -35,7 +36,7 @@ describe('Order POS Rejection and Payment Compensation Flow', () => {
     const guestRepo = new InMemoryGuestSessionRepository();
     const placesRepo = new InMemoryPlacesRepository();
     const catalogueRepo = new InMemoryCatalogueRepository();
-    const capabilityRepo = new InMemoryCapabilityRepository();
+    const capabilityRepo = new InMemoryCapabilityRepository(SYNTHETIC_TEST_CAPABILITIES);
 
     posAdapter = new MockMerchantPosAdapter();
     paymentAdapter = new MockPaymentAdapter();
@@ -47,6 +48,7 @@ describe('Order POS Rejection and Payment Compensation Flow', () => {
         fee: new Money(250n, p.currency),
         estimatedMinutes: 30,
         expiresAt: new Date(Date.now() + 60000).toISOString(),
+        serviceable: true,
       }),
     });
 
@@ -80,10 +82,10 @@ describe('Order POS Rejection and Payment Compensation Flow', () => {
     const guestRepo = new InMemoryGuestSessionRepository();
     const placesRepo = new InMemoryPlacesRepository();
     const catalogueRepo = new InMemoryCatalogueRepository();
-    const capabilityRepo = new InMemoryCapabilityRepository();
-    const localOrderRepo = new InMemoryOrderRepository();
+    const capabilityRepo = new InMemoryCapabilityRepository(SYNTHETIC_TEST_CAPABILITIES);
     const localQuotesRepo = new InMemoryQuotesRepository();
     const localOutboxRepo = new InMemoryOutboxRepository();
+    const localOrderRepo = new InMemoryOrderRepository(localQuotesRepo, localOutboxRepo, guestRepo);
 
     const localPos = new MockMerchantPosAdapter();
     let refundIssued = false;
@@ -99,10 +101,11 @@ describe('Order POS Rejection and Payment Compensation Flow', () => {
     const quoteService = new QuoteService(placesRepo, catalogueRepo, localQuotesRepo, capabilityRepo, {
       providerKey: 'mock_del',
       quoteDelivery: async (p) => ({
-        quoteRef: 'del-ref-1',
+        quoteRef: 'del-ref-comp',
         fee: new Money(250n, p.currency),
         estimatedMinutes: 30,
         expiresAt: new Date(Date.now() + 60000).toISOString(),
+        serviceable: true,
       }),
     });
 

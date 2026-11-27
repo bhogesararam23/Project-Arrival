@@ -3,6 +3,8 @@ import { renderToString } from 'react-dom/server';
 import { ApiClient, ApiClientError } from '../src/api/client.js';
 import { App } from '../src/App.js';
 import { RestaurantDetail } from '../src/components/RestaurantDetail.js';
+import { CartCheckoutDrawer } from '../src/components/CartCheckoutDrawer.js';
+import { OrderTimelineModal } from '../src/components/OrderTimelineModal.js';
 
 describe('Web API Client & Component Integration', () => {
   beforeEach(() => {
@@ -98,6 +100,51 @@ describe('Web API Client & Component Integration', () => {
     expect(html).toContain('Westminster Artisan Bakery');
     expect(html).toContain('Menu &amp; Catalogue');
     expect(html).toContain('Data Provenance &amp; Source Registry');
-    expect(html).toContain('Verified Test Fixture');
+    expect(html).toContain('Synthetic Test Fixture');
+  });
+
+  it('renders CartCheckoutDrawer with capability gate when venue is catalogue_only', () => {
+    const html = renderToString(
+      <CartCheckoutDrawer
+        items={[
+          {
+            menuItemId: 'i1',
+            name: 'Margherita Verace',
+            quantity: 1,
+            unitPrice: { amountMinor: '1150', currency: 'GBP' },
+            locationId: 'l2',
+            locationName: 'Covent Garden Craft Pizzeria',
+            catalogueVersion: 1,
+            orderability: 'catalogue_only',
+          },
+        ]}
+        onUpdateQuantity={() => {}}
+        onClearCart={() => {}}
+        onOrderCreated={() => {}}
+        onClose={() => {}}
+      />
+    );
+    expect(html).toContain('Margherita Verace');
+    expect(html).toContain('Native checkout is unavailable');
+    expect(html).not.toContain('Submit Order');
+  });
+
+  it('renders OrderTimelineModal with independent order, payment, and fulfilment states', () => {
+    const html = renderToString(
+      <OrderTimelineModal
+        initialOrder={{
+          orderId: 'ord-test-123',
+          orderState: 'awaiting_merchant',
+          paymentState: 'authorized',
+          fulfilmentState: 'quoted',
+          updatedAt: '2026-01-01T00:00:00Z',
+        }}
+        onClose={() => {}}
+      />
+    );
+    expect(html).toContain('ord-test-123');
+    expect(html).toContain('awaiting_merchant');
+    expect(html).toContain('authorized');
+    expect(html).toContain('quoted');
   });
 });

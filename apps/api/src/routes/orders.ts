@@ -49,9 +49,11 @@ export async function ordersRoutes(
       }
 
       const guestSessionId = request.guestSessionId;
+      const idempotencyRecordId = request.idempotencyRecordId;
 
       const orderCreated = await opts.orderService.submitOrder(body, {
         idempotencyKey,
+        ...(idempotencyRecordId ? { idempotencyRecordId } : {}),
         ...(guestSessionId ? { guestSessionId } : {}),
       });
 
