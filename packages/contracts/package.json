@@ -10,6 +10,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./money": {
+      "import": "./dist/money.js",
+      "types": "./dist/money.d.ts"
+    },
+    "./iso": {
+      "import": "./dist/iso.js",
+      "types": "./dist/iso.d.ts"
     }
   },
   "scripts": {

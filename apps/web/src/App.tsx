@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, type FC } from 'react';
-import type { SearchItem } from '@arrival/contracts';
+import type { SearchItem, OrderCreated } from '@arrival/contracts';
 import { SearchBar } from './components/SearchBar.js';
 import { RestaurantCard } from './components/RestaurantCard.js';
 import { RestaurantDetail } from './components/RestaurantDetail.js';
+import { CartCheckoutDrawer, type CartLineItem } from './components/CartCheckoutDrawer.js';
+import { OrderTimelineModal } from './components/OrderTimelineModal.js';
 import { defaultApiClient, ApiClientError } from './api/client.js';
 import './styles/app.css';
 
@@ -50,7 +52,9 @@ export const App: FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<SearchItem | null>(null);
-  const [cartItems, setCartItems] = useState<Array<{ name: string; priceFormatted: string }>>([]);
+  const [cartItems, setCartItems] = useState<CartLineItem[]>([]);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [activeOrder, setActiveOrder] = useState<OrderCreated | null>(null);
 
   const executeSearch = useCallback(async (searchQuery: string, searchCountry: string) => {
     // If empty query and no country filter, display initial verified pilot fixtures
@@ -92,9 +96,28 @@ export const App: FC = () => {
     return () => clearTimeout(timer);
   }, [query, country, executeSearch]);
 
-  const handleAddToCart = (name: string, priceFormatted: string) => {
-    setCartItems((prev) => [...prev, { name, priceFormatted }]);
+  const handleAddToCart = (_name: string, _priceFormatted: string, cartLine?: CartLineItem) => {
+    if (!cartLine) return;
+    setCartItems((prev) => {
+      const existing = prev.find((i) => i.menuItemId === cartLine.menuItemId);
+      if (existing) {
+        return prev.map((i) =>
+          i.menuItemId === cartLine.menuItemId ? { ...i, quantity: i.quantity + 1 } : i
+        );
+      }
+      return [...prev, cartLine];
+    });
   };
+
+  const handleUpdateQuantity = (menuItemId: string, delta: number) => {
+    setCartItems((prev) =>
+      prev
+        .map((i) => (i.menuItemId === menuItemId ? { ...i, quantity: i.quantity + delta } : i))
+        .filter((i) => i.quantity > 0)
+    );
+  };
+
+  const totalCartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
 
   return (
     <div className="app-container">
@@ -110,10 +133,19 @@ export const App: FC = () => {
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Cart: <strong>{cartItems.length} items</strong>
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {activeOrder && (
+            <button className="btn-outline" onClick={() => setActiveOrder(activeOrder)}>
+              Track Order
+            </button>
+          )}
+          <button
+            className="btn-outline"
+            onClick={() => setIsCartOpen(true)}
+            aria-label={`Open basket with ${totalCartCount} items`}
+          >
+            Basket: <strong>{totalCartCount} items</strong>
+          </button>
         </div>
       </header>
 
@@ -190,6 +222,26 @@ export const App: FC = () => {
           item={selectedItem}
           onClose={() => setSelectedItem(null)}
           onAddToCart={handleAddToCart}
+        />
+      )}
+
+      {isCartOpen && (
+        <CartCheckoutDrawer
+          items={cartItems}
+          onUpdateQuantity={handleUpdateQuantity}
+          onClearCart={() => setCartItems([])}
+          onOrderCreated={(order) => {
+            setIsCartOpen(false);
+            setActiveOrder(order);
+          }}
+          onClose={() => setIsCartOpen(false)}
+        />
+      )}
+
+      {activeOrder && (
+        <OrderTimelineModal
+          initialOrder={activeOrder}
+          onClose={() => setActiveOrder(null)}
         />
       )}
     </div>
