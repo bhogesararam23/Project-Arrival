@@ -7,10 +7,21 @@ export interface OutboxMessage<T = unknown> {
   createdAt: string;
   availableAt: string;
   attempts: number;
+  maxAttempts?: number;
+  workerId?: string | null;
+  leaseToken?: string | null;
   lockedUntil?: string | null;
   publishedAt?: string | null;
+  deadLetteredAt?: string | null;
   lastError?: string | null;
 }
+
+export type WebhookInboxStatus =
+  | 'pending'
+  | 'processing'
+  | 'processed'
+  | 'failed'
+  | 'dead_lettered';
 
 export interface WebhookInboxMessage<T = unknown> {
   id: string;
@@ -19,9 +30,13 @@ export interface WebhookInboxMessage<T = unknown> {
   providerEventRef: string;
   eventType: string;
   receivedAt: string;
+  eventTimestamp?: string | null;
   signatureVerified: boolean;
   payloadDigest: string;
   redactedPayload: T;
+  status: WebhookInboxStatus;
+  attempts: number;
+  correlationOrderId?: string | null;
   processedAt?: string | null;
   processingError?: string | null;
 }
