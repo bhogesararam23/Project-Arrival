@@ -5,6 +5,7 @@ import { RestaurantCard } from './components/RestaurantCard.js';
 import { RestaurantDetail } from './components/RestaurantDetail.js';
 import { CartCheckoutDrawer, type CartLineItem } from './components/CartCheckoutDrawer.js';
 import { OrderTimelineModal } from './components/OrderTimelineModal.js';
+import { OpsConsoleModal } from './components/OpsConsoleModal.js';
 import { defaultApiClient, ApiClientError } from './api/client.js';
 import './styles/app.css';
 
@@ -52,9 +53,30 @@ export const App: FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<SearchItem | null>(null);
-  const [cartItems, setCartItems] = useState<CartLineItem[]>([]);
+  const [cartItems, setCartItems] = useState<CartLineItem[]>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const saved = window.localStorage.getItem('arrival_cart_v1');
+        return saved ? (JSON.parse(saved) as CartLineItem[]) : [];
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return [];
+  });
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isOpsOpen, setIsOpsOpen] = useState(false);
   const [activeOrder, setActiveOrder] = useState<OrderCreated | null>(null);
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('arrival_cart_v1', JSON.stringify(cartItems));
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [cartItems]);
 
   const executeSearch = useCallback(async (searchQuery: string, searchCountry: string) => {
     // If empty query and no country filter, display initial verified pilot fixtures
@@ -145,6 +167,13 @@ export const App: FC = () => {
             aria-label={`Open basket with ${totalCartCount} items`}
           >
             Basket: <strong>{totalCartCount} items</strong>
+          </button>
+          <button
+            className="btn-outline"
+            onClick={() => setIsOpsOpen(true)}
+            aria-label="Open internal operations console"
+          >
+            Ops Console
           </button>
         </div>
       </header>
@@ -243,6 +272,10 @@ export const App: FC = () => {
           initialOrder={activeOrder}
           onClose={() => setActiveOrder(null)}
         />
+      )}
+
+      {isOpsOpen && (
+        <OpsConsoleModal onClose={() => setIsOpsOpen(false)} />
       )}
     </div>
   );
