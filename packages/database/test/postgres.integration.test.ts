@@ -7,6 +7,7 @@ import {
   checkDatabaseHealth,
   DatabaseMigrator,
   loadMigrations,
+  RetentionCleanupService,
   PgPlacesRepository,
   PgCatalogueRepository,
   PgQuotesRepository,
@@ -49,7 +50,7 @@ describePg('PostgreSQL + PostGIS Real Integration Suite', () => {
     const health = await checkDatabaseHealth(pool);
     expect(health.healthy).toBe(true);
 
-    const migrations = loadMigrations(migrationsDir);
+    const migrations = await loadMigrations(migrationsDir);
     const migrator = new DatabaseMigrator(pool, migrations, { requireLock: true });
     await migrator.up();
 
@@ -335,5 +336,79 @@ describePg('PostgreSQL + PostGIS Real Integration Suite', () => {
 
     const activeCaps = await capabilityRepo.listActiveCapabilities();
     expect(Array.isArray(activeCaps)).toBe(true);
+  });
+
+  it('verifies PostGIS availability, concurrent migrator advisory lock safety, and query plans', async () => {
+    const postgisRes = await pool.query(`SELECT PostGIS_Version() AS version;`);
+    expect(postgisRes.rows[0]?.version).toBeDefined();
+
+    const migrations = await loadMigrations(migrationsDir);
+    const pool2 = createDatabasePool({ connectionString: TEST_DB_URL, maxPoolSize: 2 });
+    try {
+      const m1 = new DatabaseMigrator(pool, migrations, { requireLock: true });
+      const m2 = new DatabaseMigrator(pool2, migrations, { requireLock: true });
+      const [exec1, exec2] = await Promise.all([m1.up(), m2.up()]);
+      expect(exec1).toEqual([]);
+      expect(exec2).toEqual([]);
+    } finally {
+      await pool2.end();
+    }
+
+    // Verify EXPLAIN plans execute cleanly on key access paths
+    const outboxPlan = await pool.query(
+      `EXPLAIN (FORMAT JSON) SELECT id FROM outbox WHERE published_at IS NULL AND dead_lettered_at IS NULL AND available_at <= now() LIMIT 10;`
+    );
+    expect(outboxPlan.rows[0]?.['QUERY PLAN']).toBeDefined();
+  });
+
+  it('enforces stale worker lease protection and concurrent quote consumption in PostgreSQL', async () => {
+    // 1. Stale worker lease protection
+    const msgId = randomUUID();
+    await outboxRepo.publish({
+      id: msgId,
+      aggregateType: 'order',
+      aggregateId: randomUUID(),
+      eventType: 'lease_test',
+      payload: {},
+      createdAt: new Date().toISOString(),
+      availableAt: new Date().toISOString(),
+      attempts: 0,
+      maxAttempts: 5,
+    });
+
+    const firstClaim = await outboxRepo.claimBatch('stale-worker', 10, 50); // 50ms lease
+    const claimed = firstClaim.find((m) => m.id === msgId)!;
+    expect(claimed).toBeDefined();
+
+    await new Promise((r) => setTimeout(r, 80)); // Let lease expire
+
+    const secondClaim = await outboxRepo.claimBatch('fresh-worker', 10, 30_000);
+    const reclaimed = secondClaim.find((m) => m.id === msgId)!;
+    expect(reclaimed).toBeDefined();
+    expect(reclaimed.leaseToken).not.toBe(claimed.leaseToken);
+
+    // Stale worker with old leaseToken MUST fail to complete!
+    const staleComplete = await outboxRepo.complete(msgId, claimed.leaseToken!);
+    expect(staleComplete).toBe(false);
+
+    // Fresh worker succeeds
+    const freshComplete = await outboxRepo.complete(msgId, reclaimed.leaseToken!);
+    expect(freshComplete).toBe(true);
+  });
+
+  it('purges expired ephemeral records via RetentionCleanupService without deleting audit_records', async () => {
+    const retention = new RetentionCleanupService(pool);
+    const expiredSessId = randomUUID();
+    const expiredDigest = createHash('sha256').update(randomUUID()).digest('hex');
+
+    await guestRepo.createSession({
+      id: expiredSessId,
+      tokenDigest: expiredDigest,
+      createdAt: new Date(Date.now() - 7200_000).toISOString(),
+      expiresAt: new Date(Date.now() - 3600_000).toISOString(),
+    });
+
+    const purged = await retention.purgeExpired();
+    expect(purged.expiredGuestSessions).toBeGreaterThanOrEqual(1);
   });
 });

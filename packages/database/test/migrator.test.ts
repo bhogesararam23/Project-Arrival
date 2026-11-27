@@ -15,7 +15,7 @@ class MockPgClient implements MigrationClient {
       this.appliedRows.push({
         version: String(params[0]),
         name: String(params[1]),
-        checksum: params[2] ? String(params[2]) : undefined,
+        ...(params[2] ? { checksum: String(params[2]) } : {}),
         applied_at: new Date(),
       });
       return { rows: [] };

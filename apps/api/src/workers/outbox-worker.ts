@@ -25,6 +25,25 @@ export class OutboxWorker {
   private running = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private activeProcessing: Promise<unknown> | null = null;
+  private lastProcessedAt: string | null = null;
+  private totalClaimed = 0;
+  private totalCompleted = 0;
+  private totalRetried = 0;
+  private totalDeadLettered = 0;
+  private totalHandlerErrors = 0;
+
+  getHealthMetrics() {
+    return {
+      workerId: this.workerId,
+      running: this.running,
+      lastProcessedAt: this.lastProcessedAt,
+      totalClaimed: this.totalClaimed,
+      totalCompleted: this.totalCompleted,
+      totalRetried: this.totalRetried,
+      totalDeadLettered: this.totalDeadLettered,
+      totalHandlerErrors: this.totalHandlerErrors,
+    };
+  }
 
   constructor(
     private readonly outboxRepo: IOutboxRepository,
@@ -140,6 +159,18 @@ export class OutboxWorker {
       );
     }
 
+    this.recordStats(stats);
     return stats;
+  }
+
+  private recordStats(stats: { claimed: number; completed: number; retried: number; deadLettered: number }) {
+    this.totalClaimed += stats.claimed;
+    this.totalCompleted += stats.completed;
+    this.totalRetried += stats.retried;
+    this.totalDeadLettered += stats.deadLettered;
+    this.totalHandlerErrors += stats.retried + stats.deadLettered;
+    if (stats.claimed > 0) {
+      this.lastProcessedAt = new Date().toISOString();
+    }
   }
 }

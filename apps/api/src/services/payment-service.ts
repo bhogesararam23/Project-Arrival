@@ -11,6 +11,8 @@ import type { IPaymentRepository, IAuditRepository } from '../repositories/inter
 import { ProviderTimeoutError, type IPaymentAdapter } from '../adapters/provider-adapters.js';
 
 export class PaymentOrchestrationService {
+  private readonly refundedTotals = new Map<string, bigint>();
+
   constructor(
     private readonly paymentRepo: IPaymentRepository,
     private readonly paymentAdapter: IPaymentAdapter,
@@ -42,13 +44,54 @@ export class PaymentOrchestrationService {
     };
 
     await this.paymentRepo.createAttempt(attempt);
+    return this.executeAuthorize(attempt, params.amount, params.paymentMethodToken, params.idempotencyKey);
+  }
 
+  /**
+   * Authorizes an existing pending payment attempt (or creates one if absent),
+   * safe for idempotent outbox worker recovery.
+   */
+  async authorizeOrder(params: {
+    orderId: string;
+    amount: Money;
+    currency: CurrencyCode;
+    paymentMethodToken: string;
+    idempotencyKey: string;
+  }): Promise<{
+    attempt: PaymentAttemptRecord;
+    outcome: 'authorized' | 'captured' | 'failed' | 'reconciliation_required';
+  }> {
+    const existing = await this.paymentRepo.getLatestByOrderId(params.orderId);
+    if (!existing) {
+      return this.createAndAuthorize(params);
+    }
+
+    if (existing.state === 'authorized' || existing.state === 'captured') {
+      return { attempt: existing, outcome: existing.state };
+    }
+    if (existing.state === 'failed' || existing.state === 'reconciliation_required') {
+      return { attempt: existing, outcome: existing.state };
+    }
+
+    return this.executeAuthorize(existing, params.amount, params.paymentMethodToken, params.idempotencyKey);
+  }
+
+  private async executeAuthorize(
+    attempt: PaymentAttemptRecord,
+    amount: Money,
+    paymentMethodToken: string,
+    idempotencyKey: string
+  ): Promise<{
+    attempt: PaymentAttemptRecord;
+    outcome: 'authorized' | 'captured' | 'failed' | 'reconciliation_required';
+  }> {
+    const nowIso = new Date().toISOString();
     try {
       const result = await this.paymentAdapter.collectPayment({
-        paymentMethodToken: params.paymentMethodToken,
-        amount: params.amount,
-        orderId: params.orderId,
-        idempotencyKey: params.idempotencyKey,
+        paymentMethodToken,
+        amount,
+        orderId: attempt.orderId,
+        idempotencyKey,
       });
 
       const targetState: PaymentState =
@@ -63,16 +106,15 @@ export class PaymentOrchestrationService {
         id: randomUUID(),
         paymentAttemptId: attempt.id,
         eventType: `payment_${targetState}`,
-        amountMinor: params.amount.amountMinor.toString(),
+        amountMinor: amount.amountMinor.toString(),
         providerEventRef: result.providerRef,
       });
 
       return { attempt: updated || { ...attempt, state: targetState }, outcome: result.status };
     } catch (err) {
       if (err instanceof ProviderTimeoutError) {
-        // Query provider before deciding; never blindly retry a financial charge
         if (this.paymentAdapter.queryPaymentStatus) {
-          const queried = await this.paymentAdapter.queryPaymentStatus(params.orderId, params.idempotencyKey);
+          const queried = await this.paymentAdapter.queryPaymentStatus(attempt.orderId, idempotencyKey);
           if (queried.status === 'authorized' || queried.status === 'captured') {
             const updated = await this.paymentRepo.updateState(attempt.id, queried.status, queried.providerRef);
             return { attempt: updated || { ...attempt, state: queried.status }, outcome: queried.status };
@@ -90,10 +132,10 @@ export class PaymentOrchestrationService {
         if (this.auditRepo) {
           await this.auditRepo.createCompensation({
             id: randomUUID(),
-            orderId: params.orderId,
+            orderId: attempt.orderId,
             operationType: 'manual_reconciliation',
             state: 'reconciliation_required',
-            idempotencyKey: `${params.idempotencyKey}-timeout-recon`,
+            idempotencyKey: `${idempotencyKey}-timeout-recon`,
             attempts: 1,
             lastError: err.message,
             reason: 'Payment authorization timed out; provider outcome uncertain',
@@ -109,6 +151,88 @@ export class PaymentOrchestrationService {
       }
       throw err;
     }
+  }
+
+  async capture(orderId: string, idempotencyKey: string): Promise<PaymentAttemptRecord> {
+    const attempt = await this.paymentRepo.getLatestByOrderId(orderId);
+    if (!attempt) {
+      throw ArrivalError.notFound(`No payment attempt found for order ${orderId}`);
+    }
+    if (attempt.state === 'captured') {
+      return attempt;
+    }
+    if (!canTransitionPayment(attempt.state, 'captured')) {
+      throw ArrivalError.conflict(`Cannot capture payment in state "${attempt.state}"`);
+    }
+    if (!this.paymentAdapter.capturePayment || !attempt.providerPaymentRef) {
+      throw ArrivalError.unprocessableEntity('Payment capture not supported or missing provider reference');
+    }
+
+    const res = await this.paymentAdapter.capturePayment(
+      attempt.providerPaymentRef,
+      new Money(attempt.amountMinor, attempt.currency),
+      idempotencyKey
+    );
+
+    const nextState: PaymentState = res.status === 'captured' ? 'captured' : 'failed';
+    const updated = await this.paymentRepo.updateState(attempt.id, nextState);
+    await this.paymentRepo.recordEvent({
+      id: randomUUID(),
+      paymentAttemptId: attempt.id,
+      eventType: `payment_${nextState}`,
+      amountMinor: attempt.amountMinor,
+    });
+    return updated!;
+  }
+
+  async partialRefund(params: {
+    orderId: string;
+    amount: Money;
+    reason: string;
+    idempotencyKey: string;
+  }): Promise<{ state: PaymentState; refundRef: string }> {
+    const attempt = await this.paymentRepo.getLatestByOrderId(params.orderId);
+    if (!attempt) {
+      throw ArrivalError.notFound(`No payment attempt found for order ${params.orderId}`);
+    }
+    if (attempt.currency !== params.amount.currency) {
+      throw ArrivalError.badRequest(`Refund currency ${params.amount.currency} does not match ${attempt.currency}`);
+    }
+    if (attempt.state !== 'captured' && attempt.state !== 'partially_refunded') {
+      throw ArrivalError.conflict(`Cannot partial-refund payment in state "${attempt.state}"`);
+    }
+
+    const capturedMinor = BigInt(attempt.amountMinor);
+    const alreadyRefunded = this.refundedTotals.get(attempt.id) ?? 0n;
+    const remaining = capturedMinor - alreadyRefunded;
+
+    if (params.amount.amountMinor <= 0n || params.amount.amountMinor > remaining) {
+      throw ArrivalError.unprocessableEntity(
+        `Refund amount ${params.amount.amountMinor} exceeds remaining refundable amount ${remaining}`,
+        'REFUND_EXCEEDS_CAPTURED'
+      );
+    }
+
+    const res = await this.paymentAdapter.refundPayment(
+      attempt.providerPaymentRef || attempt.id,
+      params.amount,
+      params.idempotencyKey
+    );
+
+    const newRefundedTotal = alreadyRefunded + params.amount.amountMinor;
+    this.refundedTotals.set(attempt.id, newRefundedTotal);
+    const targetState: PaymentState = newRefundedTotal === capturedMinor ? 'refunded' : 'partially_refunded';
+
+    await this.paymentRepo.updateState(attempt.id, targetState);
+    await this.paymentRepo.recordEvent({
+      id: randomUUID(),
+      paymentAttemptId: attempt.id,
+      eventType: `payment_${targetState}`,
+      amountMinor: params.amount.amountMinor.toString(),
+      providerEventRef: res.refundRef,
+    });
+
+    return { state: targetState, refundRef: res.refundRef };
   }
 
   async refundOrVoid(params: {

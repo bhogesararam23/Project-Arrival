@@ -25,3 +25,4 @@ Current records:
 - [0009 — Durable Outbox Worker Leasing and Webhook Inbox Deduplication](0009-durable-outbox-worker-leasing-and-webhook-inbox.md)
 - [0010 — Independent Order, Payment, and Fulfilment Orchestration & Reconciliation](0010-independent-order-payment-fulfilment-reconciliation.md)
 - [0011 — Operations Control Plane, Operator RBAC, and Capability Governance](0011-operations-control-plane-and-capability-governance.md)
+- [0012 — Recoverable Outbox Orchestration and Pending Webhook Recovery](0012-recoverable-outbox-orchestration-and-webhook-recovery.md)

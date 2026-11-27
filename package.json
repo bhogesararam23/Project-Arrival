@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.29.3",
   "scripts": {
     "build:packages": "pnpm --filter \"./packages/*\" run build",
-    "build": "pnpm build:packages && pnpm -r run build",
+    "build": "pnpm build:packages && pnpm --filter \"./apps/*\" run build",
     "pretypecheck": "pnpm build:packages",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",

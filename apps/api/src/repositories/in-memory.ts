@@ -973,6 +973,19 @@ export class InMemoryWebhookInboxRepository implements IWebhookInboxRepository {
       .filter((m) => m.status === 'failed' || m.status === 'dead_lettered')
       .slice(0, limit);
   }
+
+  async claimPendingBatch(limit = 20): Promise<WebhookInboxMessage[]> {
+    const claimed: WebhookInboxMessage[] = [];
+    for (const msg of this.messages.values()) {
+      if (claimed.length >= limit) break;
+      if (msg.status === 'pending' && msg.signatureVerified) {
+        msg.status = 'processing';
+        msg.attempts += 1;
+        claimed.push({ ...msg });
+      }
+    }
+    return claimed;
+  }
 }
 
 export class InMemoryAuditRepository implements IAuditRepository {

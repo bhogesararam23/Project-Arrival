@@ -33,6 +33,8 @@ export interface OperationalOverview {
   reconciliationRequiredCount: number;
   activeCapabilitiesCount: number;
   expiringCapabilitiesCount: number;
+  sampleBounded: boolean;
+  sampleLimit: number;
 }
 
 export interface OrderInvestigationView {
@@ -85,6 +87,8 @@ export class OperationsService {
       reconciliationRequiredCount: reconPayments.length,
       activeCapabilitiesCount: allCaps.filter((c) => c.status === 'production_verified' && !c.revokedAt).length,
       expiringCapabilitiesCount: expiringCaps.length,
+      sampleBounded: orders.length >= 200 || failedWebhooks.length >= 200 || reconPayments.length >= 200,
+      sampleLimit: 200,
     };
   }
 
@@ -128,11 +132,13 @@ export class OperationsService {
       throw ArrivalError.badRequest('A descriptive reason (min 5 chars) is required for operational replay');
     }
 
-    const replayed = await this.outboxRepo.replayDeadLetter(params.messageId);
-    if (!replayed) {
+    const dlq = await this.outboxRepo.listDeadLetter(200);
+    const target = dlq.find((m) => m.id === params.messageId);
+    if (!target) {
       throw ArrivalError.notFound(`Dead-letter outbox message ${params.messageId} not found or already published`);
     }
 
+    // Record mandatory audit evidence BEFORE mutating state so privileged actions never succeed unaudited
     await this.auditRepo.recordAudit({
       id: randomUUID(),
       actorId: params.actorId,
@@ -143,8 +149,13 @@ export class OperationsService {
       reason: params.reason,
       requestId: params.requestId || null,
       occurredAt: new Date().toISOString(),
-      metadataRedacted: {},
+      metadataRedacted: { eventType: target.eventType },
     });
+
+    const replayed = await this.outboxRepo.replayDeadLetter(params.messageId);
+    if (!replayed) {
+      throw ArrivalError.notFound(`Dead-letter outbox message ${params.messageId} not found or already published`);
+    }
 
     return { replayed: true };
   }
@@ -182,7 +193,6 @@ export class OperationsService {
       );
     }
 
-    const updated = await this.paymentRepo.updateState(attempt.id, params.resolvedState);
     await this.auditRepo.recordAudit({
       id: randomUUID(),
       actorId: params.actorId,
@@ -200,6 +210,7 @@ export class OperationsService {
       },
     });
 
+    const updated = await this.paymentRepo.updateState(attempt.id, params.resolvedState);
     return updated!;
   }
 
@@ -218,8 +229,8 @@ export class OperationsService {
       throw ArrivalError.badRequest('A descriptive reason is required to suspend a capability');
     }
 
-    const suspended = await this.capabilityRepo.suspendCapability(params.capabilityId, params.reason);
-    if (!suspended) {
+    const allCaps = await this.capabilityRepo.listAllCapabilities();
+    if (!allCaps.some((c) => c.id === params.capabilityId)) {
       throw ArrivalError.notFound(`Capability ${params.capabilityId} not found`);
     }
 
@@ -235,6 +246,11 @@ export class OperationsService {
       occurredAt: new Date().toISOString(),
       metadataRedacted: {},
     });
+
+    const suspended = await this.capabilityRepo.suspendCapability(params.capabilityId, params.reason);
+    if (!suspended) {
+      throw ArrivalError.notFound(`Capability ${params.capabilityId} not found`);
+    }
 
     return { suspended: true };
   }

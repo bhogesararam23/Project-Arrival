@@ -45,6 +45,7 @@ export const CartCheckoutDrawer: FC<Props> = ({
 
   const primaryItem = items[0];
   const isOrderable = primaryItem?.orderability === 'native_orderable';
+  const isQuoteExpired = Boolean(quote && new Date(quote.expiresAt).getTime() <= Date.now());
 
   const handleRequestQuote = async () => {
     if (!primaryItem) return;
@@ -248,6 +249,10 @@ export const CartCheckoutDrawer: FC<Props> = ({
             {!isOrderable ? (
               <div style={{ padding: '10px', borderRadius: '6px', background: '#fefce8', color: '#854d0e', fontSize: '13px' }}>
                 Native checkout is unavailable for this venue because production merchant, payment, or fulfilment capabilities are not verified.
+              </div>
+            ) : quote && isQuoteExpired ? (
+              <div role="alert" style={{ padding: '10px', borderRadius: '6px', background: '#fff1f2', color: '#be123c', fontSize: '13px' }}>
+                This quote has expired. Click &ldquo;Request Authoritative Server Quote&rdquo; above to refresh pricing.
               </div>
             ) : quote ? (
               <button

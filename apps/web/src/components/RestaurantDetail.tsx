@@ -21,6 +21,8 @@ interface DisplayItem {
   modifierGroups?: Array<{
     id: string;
     name: string;
+    minimumSelections?: number;
+    maximumSelections?: number;
     options: Array<{ id: string; name: string; priceDelta: MoneyJson; available: boolean }>;
   }>;
 }
@@ -44,6 +46,23 @@ export const RestaurantDetail: FC<Props> = ({ item, onClose, onAddToCart }) => {
   const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedModifiers, setSelectedModifiers] = useState<Record<string, string[]>>({});
+
+  const toggleModifier = (itemId: string, optionId: string, maxSelections = 1) => {
+    setSelectedModifiers((prev) => {
+      const current = prev[itemId] || [];
+      if (current.includes(optionId)) {
+        return { ...prev, [itemId]: current.filter((id) => id !== optionId) };
+      }
+      if (maxSelections === 1) {
+        return { ...prev, [itemId]: [optionId] };
+      }
+      if (current.length >= maxSelections) {
+        return prev;
+      }
+      return { ...prev, [itemId]: [...current, optionId] };
+    });
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -121,8 +140,35 @@ export const RestaurantDetail: FC<Props> = ({ item, onClose, onAddToCart }) => {
                   <h4>{menuItem.name}</h4>
                   {menuItem.description && <p>{menuItem.description}</p>}
                   {menuItem.modifierGroups && menuItem.modifierGroups.length > 0 && (
-                    <div style={{ marginTop: '6px', fontSize: '12px', color: 'var(--accent-gold)' }}>
-                      Modifiers: {menuItem.modifierGroups.map((g) => g.name).join(', ')}
+                    <div style={{ marginTop: '8px', fontSize: '12px', display: 'grid', gap: '6px' }}>
+                      {menuItem.modifierGroups.map((group) => (
+                        <div key={group.id}>
+                          <strong style={{ color: 'var(--accent-gold)' }}>{group.name}:</strong>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                            {group.options.map((opt) => {
+                              const checked = (selectedModifiers[menuItem.id] || []).includes(opt.id);
+                              return (
+                                <label
+                                  key={opt.id}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', opacity: opt.available ? 1 : 0.5 }}
+                                >
+                                  <input
+                                    type={group.maximumSelections === 1 ? 'radio' : 'checkbox'}
+                                    name={`mod-${menuItem.id}-${group.id}`}
+                                    checked={checked}
+                                    disabled={!opt.available}
+                                    onChange={() => toggleModifier(menuItem.id, opt.id, group.maximumSelections ?? 1)}
+                                  />
+                                  <span>
+                                    {opt.name} (+{Money.formatJson(opt.priceDelta)})
+                                    {!opt.available ? ' [Unavailable]' : ''}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -132,19 +178,21 @@ export const RestaurantDetail: FC<Props> = ({ item, onClose, onAddToCart }) => {
                     className="add-cart-btn"
                     disabled={!isOrderable || menuItem.available === false}
                     title={!isOrderable ? 'Ordering is disabled for unverified or browse-only routes' : 'Add to cart'}
-                    onClick={() =>
+                    onClick={() => {
+                      const chosenMods = selectedModifiers[menuItem.id];
                       onAddToCart &&
-                      onAddToCart(menuItem.name, priceStr, {
-                        menuItemId: menuItem.id,
-                        name: menuItem.name,
-                        quantity: 1,
-                        unitPrice,
-                        locationId: item.locationId,
-                        locationName: item.name,
-                        catalogueVersion: catalogue?.version || 1,
-                        orderability: item.orderability,
-                      })
-                    }
+                        onAddToCart(menuItem.name, priceStr, {
+                          menuItemId: menuItem.id,
+                          name: menuItem.name,
+                          quantity: 1,
+                          unitPrice,
+                          ...(chosenMods && chosenMods.length > 0 ? { modifierOptionIds: chosenMods } : {}),
+                          locationId: item.locationId,
+                          locationName: item.name,
+                          catalogueVersion: catalogue?.version || 1,
+                          orderability: item.orderability,
+                        });
+                    }}
                   >
                     {isOrderable ? '+ Add' : 'Browse Only'}
                   </button>

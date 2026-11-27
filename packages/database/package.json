@@ -16,7 +16,7 @@
     "build": "tsc",
     "test": "vitest run",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "migrate": "node dist/cli.js up",
     "rollback": "node dist/cli.js down",
     "validate": "node dist/cli.js validate"

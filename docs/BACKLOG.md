@@ -83,3 +83,13 @@ Status discipline: `Implemented` = code & unit/contract tests complete; `Integra
 | B-014 | Recoverable checkout orchestration | **Implemented** | Atomic quote consumption + order + snapshot + outbox commit before external calls; POS rejection compensation; payment/POS timeout `reconciliation_required`. |
 | B-015 | Operations control plane & RBAC | **Implemented** | `/v1/ops/*` endpoints with `ops_readonly` vs `ops_admin` RBAC, PII masking, DLQ replay, reconciliation resolution, capability suspension, and immutable `audit_records`. |
 | B-019 | Customer basket, quote & order timeline | **Implemented** | `CartCheckoutDrawer` (server-authoritative quote breakdown, capability gate) and `OrderTimelineModal` (persisted event timeline) in `@arrival/web`. |
+
+## Milestone 4 Implementation Status (Reliability, Recoverable Orchestration & Operational Readiness Completed 2026-11-27)
+
+| Backlog ID | Implemented Component | Status | Verification & Evidence |
+|---|---|---|---|
+| B-004 | PostgreSQL CI integration & `tsconfig.test.json` | **Implemented** | Fixed missing `await loadMigrations` in `postgres.integration.test.ts`; added `tsconfig.test.json` so test type errors fail `pnpm typecheck`; added PostGIS/retention/stale-lease PG integration tests. |
+| B-009 | Recoverable `OrderOrchestrator` & bounded refunds | **Implemented** | Replaced no-op `index.ts` outbox handlers with `OrderOrchestrator` (`order_submitted`, `order_compensation_requested`, `order_compensation_refunded`); added `capture()` and bounded `partialRefund()` in `PaymentOrchestrationService`. |
+| B-010 | Durable `WebhookService.recoverPendingEvents()` | **Implemented** | Added `claimPendingBatch()` (`FOR UPDATE SKIP LOCKED`), recursive array PII redaction, duplicate digest mismatch rejection (`409`), and worker health metrics. |
+| B-015 | Atomic ops auditability & `OpsConsoleModal` | **Implemented** | Mandatory `audit_records` persistence before privileged mutations; `OPS_AUTH_TOKENS_JSON` & `WEBHOOK_SECRETS_JSON` config loading; `/health/ready` config/worker reporting; `OpsConsoleModal` UI. |
+| B-016 | Operational runbooks, security review & pilot dossier | **Implemented** | `docs/operations/RUNBOOKS.md`, `docs/audits/MILESTONE_4_SECURITY_REVIEW.md`, `docs/operations/PILOT_READINESS_DOSSIER.md`, `docs/research/MILESTONE_4_DISCOVERY_PROVIDER_EVALUATION.md`. |

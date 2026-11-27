@@ -99,6 +99,9 @@ export interface BuildAppOptions {
   fulfilmentAdapter?: IFulfilmentAdapter;
   webhookVerifier?: WebhookSignatureVerifier;
   operatorVerifier?: IOperatorTokenVerifier;
+  operatorAuthConfigured?: boolean;
+  webhookAuthConfigured?: boolean;
+  getWorkerHealth?: () => Record<string, unknown>;
 }
 
 export function buildApp(opts?: BuildAppOptions): FastifyInstance {
@@ -204,7 +207,12 @@ export function buildApp(opts?: BuildAppOptions): FastifyInstance {
   registerIdempotencyResponseHook(app, idempotencyRepo);
 
   // Register Routes
-  app.register(healthRoutes, { pgPool: pool });
+  app.register(healthRoutes, {
+    pgPool: pool,
+    operatorAuthConfigured: opts?.operatorAuthConfigured ?? Boolean(opts?.operatorVerifier),
+    webhookAuthConfigured: opts?.webhookAuthConfigured ?? Boolean(opts?.webhookVerifier),
+    ...(opts?.getWorkerHealth ? { getWorkerHealth: opts.getWorkerHealth } : {}),
+  });
   app.register(guestSessionRoutes, { guestRepo });
   app.register(placesRoutes, { discoveryService });
   app.register(catalogueRoutes, { catalogueService });

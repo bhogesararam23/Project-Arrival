@@ -5,6 +5,7 @@ import { App } from '../src/App.js';
 import { RestaurantDetail } from '../src/components/RestaurantDetail.js';
 import { CartCheckoutDrawer } from '../src/components/CartCheckoutDrawer.js';
 import { OrderTimelineModal } from '../src/components/OrderTimelineModal.js';
+import { OpsConsoleModal } from '../src/components/OpsConsoleModal.js';
 
 describe('Web API Client & Component Integration', () => {
   beforeEach(() => {
@@ -146,5 +147,12 @@ describe('Web API Client & Component Integration', () => {
     expect(html).toContain('awaiting_merchant');
     expect(html).toContain('authorized');
     expect(html).toContain('quoted');
+  });
+
+  it('renders OpsConsoleModal with RBAC token prompt and zero hardcoded secrets', () => {
+    const html = renderToString(<OpsConsoleModal onClose={() => {}} />);
+    expect(html).toContain('Operations Overview');
+    expect(html).toContain('Operator Bearer Token');
+    expect(html).toContain('ops_readonly');
   });
 });

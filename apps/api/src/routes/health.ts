@@ -3,7 +3,12 @@ import { checkDatabaseHealth, getPoolMetrics, type DatabasePool } from '@arrival
 
 export async function healthRoutes(
   fastify: FastifyInstance,
-  opts?: { pgPool?: DatabasePool | undefined }
+  opts?: {
+    pgPool?: DatabasePool | undefined;
+    operatorAuthConfigured?: boolean;
+    webhookAuthConfigured?: boolean;
+    getWorkerHealth?: () => Record<string, unknown>;
+  }
 ) {
   fastify.get('/health', async () => {
     return { status: 'healthy', version: '1.0.0', time: new Date().toISOString() };
@@ -14,10 +19,18 @@ export async function healthRoutes(
   });
 
   fastify.get('/health/ready', async (_request, reply) => {
+    const workerHealth = opts?.getWorkerHealth ? opts.getWorkerHealth() : undefined;
+    const configStatus = {
+      operatorAuthConfigured: Boolean(opts?.operatorAuthConfigured),
+      webhookAuthConfigured: Boolean(opts?.webhookAuthConfigured),
+    };
+
     if (!opts?.pgPool) {
       return reply.status(200).send({
         status: 'ready',
         database: 'in_memory_test_double',
+        config: configStatus,
+        ...(workerHealth ? { worker: workerHealth } : {}),
       });
     }
 
@@ -30,6 +43,8 @@ export async function healthRoutes(
         database: 'disconnected',
         error: dbHealth.error,
         pool: poolMetrics,
+        config: configStatus,
+        ...(workerHealth ? { worker: workerHealth } : {}),
       });
     }
 
@@ -38,6 +53,8 @@ export async function healthRoutes(
       database: 'connected',
       latencyMs: dbHealth.latencyMs,
       pool: poolMetrics,
+      config: configStatus,
+      ...(workerHealth ? { worker: workerHealth } : {}),
     });
   });
 }

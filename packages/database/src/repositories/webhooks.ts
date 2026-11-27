@@ -100,6 +100,32 @@ export class PgWebhookInboxRepository {
     );
     return res.rows.map(mapWebhookRow);
   }
+
+  async claimPendingBatch(limit = 20): Promise<WebhookInboxMessage[]> {
+    const res = await this.pool.query(
+      `WITH candidate AS (
+         SELECT id
+         FROM webhook_inbox
+         WHERE status = 'pending' AND signature_verified = true
+         ORDER BY received_at ASC
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED
+       )
+       UPDATE webhook_inbox w
+       SET status = 'processing',
+           attempts = w.attempts + 1
+       FROM candidate c
+       WHERE w.id = c.id
+       RETURNING
+         w.id, w.provider_key, w.provider_account_ref, w.provider_event_ref,
+         w.event_type, w.received_at, w.event_timestamp, w.signature_verified,
+         encode(w.payload_digest, 'hex') as payload_digest,
+         w.redacted_payload, w.status, w.attempts, w.correlation_order_id,
+         w.processed_at, w.processing_error;`,
+      [limit]
+    );
+    return res.rows.map(mapWebhookRow);
+  }
 }
 
 function mapWebhookRow(row: any): WebhookInboxMessage {
